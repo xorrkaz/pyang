@@ -9,6 +9,7 @@ from . import types
 from . import syntax
 from . import grammar
 from . import xpath
+from . import plugin
 
 ### Functions that plugins can use
 
