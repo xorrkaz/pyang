@@ -47,7 +47,7 @@ class TreePlugin(plugin.PyangPlugin):
                                  action="store_true",
                                  help="Do not expand uses of groupings"),
             ]
-        if plugin.is_plugin_registered('restconf'):
+        if plugin.is_plugin_registered('restconf') or plugin.is_plugin_registered('yang-data-ext'):
             optlist.append(
                 optparse.make_option("--tree-print-yang-data",
                                      dest="tree_print_yang_data",
@@ -153,7 +153,10 @@ def emit_tree(ctx, modules, fd, depth, llen, path):
                 mods.append(subm)
         for m in mods:
             section_delimiter_printed=False
-            for augment in m.search('augment'):
+            augments = m.search('augment')
+            if ctx.opts.tree_print_yang_data:
+                augments += m.search(('ietf-yang-data-ext', 'augment-yang-data'))
+            for augment in augments:
                 if (hasattr(augment.i_target_node, 'i_module') and
                     augment.i_target_node.i_module not in modules + mods):
                     if not section_delimiter_printed:
@@ -227,6 +230,7 @@ def emit_tree(ctx, modules, fd, depth, llen, path):
 
         if ctx.opts.tree_print_yang_data:
             yds = module.search(('ietf-restconf', 'yang-data'))
+            yds += module.search(('ietf-yang-data-ext', 'yang-data'))
             if len(yds) > 0:
                 if not printed_header:
                     print_header()

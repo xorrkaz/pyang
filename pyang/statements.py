@@ -2431,7 +2431,16 @@ def find_target_node(ctx, stmt, is_augment=False):
     if (stmt.parent.keyword in ('module', 'submodule') or
         is_absolute):
         # find the first node
-        node = search_child(module.i_children, module.i_modulename, identifier)
+        child_nodes = []
+        if is_augment and plugin.is_plugin_registered('yang-data-ext'):
+            yds = module.search(('ietf-yang-data-ext', 'yang-data'))
+            if len(yds) > 0:
+                child_nodes = yds[0].i_children
+            else:
+                child_nodes = module.i_children
+        else:
+            child_nodes = module.i_children
+        node = search_child(child_nodes, module.i_modulename, identifier)
         if not is_submodule_included(stmt, node):
             node = None
         if node is None:
