@@ -9,7 +9,6 @@ from . import types
 from . import syntax
 from . import grammar
 from . import xpath
-from . import plugin
 
 ### Functions that plugins can use
 
@@ -1683,7 +1682,10 @@ def v_expand_2_augment(ctx, stmt):
     if hasattr(stmt, 'i_target_node'):
         # already expanded
         return
-    stmt.i_target_node = find_target_node(ctx, stmt, is_augment=True)
+    is_augment_yang_data = False
+    if ('ietf-yang-data-ext', 'augment-yang-data') == stmt.keyword:
+        is_augment_yang_data = True
+    stmt.i_target_node = find_target_node(ctx, stmt, is_augment=True, is_augment_yang_data=is_augment_yang_data)
 
     if stmt.i_target_node is None:
         return
@@ -2410,7 +2412,7 @@ def search_data_keyword_child(children, modulename, identifier):
             return child
     return None
 
-def find_target_node(ctx, stmt, is_augment=False):
+def find_target_node(ctx, stmt, is_augment=False, is_augment_yang_data=False):
     if (hasattr(stmt, 'is_grammatically_valid') and
         stmt.is_grammatically_valid == False):
         return None
@@ -2433,7 +2435,7 @@ def find_target_node(ctx, stmt, is_augment=False):
         is_absolute):
         # find the first node
         child_nodes = []
-        if is_augment and plugin.is_plugin_registered('yang-data-ext'):
+        if is_augment_yang_data:
             yds = module.search(('ietf-yang-data-ext', 'yang-data'))
             if len(yds) > 0:
                 child_nodes = yds[0].i_children
