@@ -53,7 +53,7 @@ module u {
     key "id";
     leaf id {
       if-feature foo; // error: not legal in 1.1
-      when f; // error: not legal in 1.1
+      when '1'; // error: not legal in 1.1
       type int32;
     }
   }
@@ -211,5 +211,18 @@ module u {
     }
     default id2; // error; not derived from id1
   }
+
+  grouping g_with_action {
+    action bax;
+  }
+
+  container c_with_action {
+    choice x {
+      case y {
+        uses g_with_action; // error; this grouping defines an action
+      }
+    }
+  }
+  uses g_with_action; // error; this grouping defines an action
 
 }

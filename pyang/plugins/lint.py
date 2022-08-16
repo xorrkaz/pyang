@@ -1,12 +1,11 @@
 """YANG usage guidelines plugin
-See RFC 6087
+See RFC 8407
 Other plugins can derive from this and make it more specific, e.g.,
 ietf.py derives from this and sets the namespace and module name prefixes
 to IETF-specific values.
 """
 
 import optparse
-import sys
 
 from pyang import plugin
 from pyang import statements
@@ -37,13 +36,17 @@ class LintPlugin(plugin.PyangPlugin):
         # define its own checks.
         self.modulename_prefixes = []
 
+        # Set this to control whether to check that names are hyphenated
+        # and don't contain any upper-case characters
+        self.ensure_hyphenated_names = None
+
     def add_opts(self, optparser):
         optlist = [
             optparse.make_option("--lint",
                                  dest="lint",
                                  action="store_true",
                                  help="Validate the module(s) according to " \
-                                 "RFC 6087 rules."),
+                                 "RFC 8407rules."),
             optparse.make_option("--lint-namespace-prefix",
                                  dest="lint_namespace_prefixes",
                                  default=[],
@@ -80,6 +83,11 @@ class LintPlugin(plugin.PyangPlugin):
         self.namespace_prefixes.extend(ctx.opts.lint_namespace_prefixes)
         self.modulename_prefixes.extend(ctx.opts.lint_modulename_prefixes)
 
+        # copy other lint options to instance variables, taking care not to
+        # overwrite any settings from derived class constructors
+        if ctx.opts.lint_ensure_hyphenated_names:
+            self.ensure_hyphenated_names = True
+
         # register our grammar validation funs
 
         statements.add_validation_var(
@@ -103,7 +111,7 @@ class LintPlugin(plugin.PyangPlugin):
             'grammar', ['$chk_recommended'],
             lambda ctx, s: v_chk_recommended_substmt(ctx, s))
 
-        if ctx.opts.lint_ensure_hyphenated_names:
+        if self.ensure_hyphenated_names:
             statements.add_validation_fun(
                 'grammar', ['*'],
                 lambda ctx, s: v_chk_hyphenated_names(ctx, s))
@@ -127,7 +135,7 @@ class LintPlugin(plugin.PyangPlugin):
         # register our error codes
         error.add_error_code(
             'LINT_EXPLICIT_DEFAULT', 4,
-            'RFC 6087: 4.3: '
+            'RFC 8407: 4.4: '
             + 'statement "%s" is given with its default value "%s"')
         error.add_error_code(
             'LINT_MISSING_REQUIRED_SUBSTMT', 3,
@@ -139,27 +147,27 @@ class LintPlugin(plugin.PyangPlugin):
             + 'statement "%s" should have a "%s" substatement')
         error.add_error_code(
             'LINT_BAD_NAMESPACE_VALUE', 4,
-            'RFC 6087: 4.8: namespace value should be "%s"')
+            'RFC 8407: 4.9: namespace value should be "%s"')
         error.add_error_code(
             'LINT_BAD_MODULENAME_PREFIX_1', 4,
-            'RFC 6087: 4.1: '
+            'RFC 8407: 4.1: '
             + 'the module name should start with the string %s')
         error.add_error_code(
             'LINT_BAD_MODULENAME_PREFIX_N', 4,
-            'RFC 6087: 4.1: '
+            'RFC 8407: 4.1: '
             + 'the module name should start with one of the strings %s')
         error.add_error_code(
             'LINT_NO_MODULENAME_PREFIX', 4,
-            'RFC 6087: 4.1: '
+            'RFC 8407: 4.1: '
             + 'no module name prefix string used')
         error.add_error_code(
             'LINT_BAD_REVISION', 3,
-            'RFC 6087: 4.6: '
+            'RFC 8407: 4.7: '
             + 'the module\'s revision %s is older than '
             + 'submodule %s\'s revision %s')
         error.add_error_code(
             'LINT_TOP_MANDATORY', 3,
-            'RFC 6087: 4.9: '
+            'RFC 8407: 4.10: '
             + 'top-level node %s must not be mandatory')
         error.add_error_code(
             'LINT_NOT_HYPHENATED', 4,
@@ -168,7 +176,7 @@ class LintPlugin(plugin.PyangPlugin):
         # override std error string
         error.add_error_code(
             'LONG_IDENTIFIER', 3,
-            'RFC 6087: 4.2: identifier %s exceeds %s characters')
+            'RFC 8407: 4.3: identifier %s exceeds %s characters')
 
 _keyword_with_default = {
     'status': 'current',
@@ -181,32 +189,30 @@ _keyword_with_default = {
 
 _required_substatements = {
     'module': (('contact', 'organization', 'description', 'revision'),
-               "RFC 6087: 4.7"),
+               "RFC 8407: 4.8"),
     'submodule': (('contact', 'organization', 'description', 'revision'),
-                  "RFC 6087: 4.7"),
-    'revision':(('reference',), "RFC 6087: 4.7"),
-    'extension':(('description',), "RFC 6087: 4.12"),
-    'feature':(('description',), "RFC 6087: 4.12"),
-    'identity':(('description',), "RFC 6087: 4.12"),
-    'typedef':(('description',), "RFC 6087: 4.11,4.12"),
-    'grouping':(('description',), "RFC 6087: 4.12"),
-    'augment':(('description',), "RFC 6087: 4.12"),
-    'rpc':(('description',), "RFC 6087: 4.12"),
-    'notification':(('description',), "RFC 6087: 4.12,4.14"),
-    'container':(('description',), "RFC 6087: 4.12"),
-    'leaf':(('description',), "RFC 6087: 4.12"),
-    'leaf-list':(('description',), "RFC 6087: 4.12"),
-    'list':(('description',), "RFC 6087: 4.12"),
-    'choice':(('description',), "RFC 6087: 4.12"),
-    'anyxml':(('description',), "RFC 6087: 4.12"),
+                  "RFC 8407: 4.8"),
+    'revision':(('reference',), "RFC 8407: 4.8"),
+    'extension':(('description',), "RFC 8407: 4.14"),
+    'feature':(('description',), "RFC 8407: 4.14"),
+    'identity':(('description',), "RFC 8407: 4.14"),
+    'typedef':(('description',), "RFC 8407: 4.13,4.14"),
+    'grouping':(('description',), "RFC 8407: 4.14"),
+    'augment':(('description',), "RFC 8407: 4.14"),
+    'rpc':(('description',), "RFC 8407: 4.14"),
+    'notification':(('description',), "RFC 8407: 4.14,4.16"),
+    'container':(('description',), "RFC 8407: 4.14"),
+    'leaf':(('description',), "RFC 8407: 4.14"),
+    'leaf-list':(('description',), "RFC 8407: 4.14"),
+    'list':(('description',), "RFC 8407: 4.14"),
+    'choice':(('description',), "RFC 8407: 4.14"),
+    'anyxml':(('description',), "RFC 8407: 4.14"),
     }
 
 _recommended_substatements = {
-    'enum':(('description',), "RFC 6087: 4.10,4.12"),
-    'bit':(('description',), "RFC 6087: 4.10,4.12"),
+    'enum':(('description',), "RFC 8407: 4.11.3,4.14"),
+    'bit':(('description',), "RFC 8407: 4.11.3,4.14"),
     }
-
-_ietf_namespace_prefix = 'urn:ietf:params:xml:ns:yang:'
 
 def v_chk_default(ctx, stmt):
     if (stmt.arg == _keyword_with_default[stmt.keyword] and
@@ -233,7 +239,7 @@ def v_chk_recommended_substmt(ctx, stmt):
                         (s, stmt.keyword, r))
 
 def v_chk_namespace(ctx, stmt, namespace_prefixes):
-    if namespace_prefixes != []:
+    if namespace_prefixes:
         for prefix in namespace_prefixes:
             if stmt.arg == prefix + stmt.i_module.arg:
                 return
@@ -241,9 +247,9 @@ def v_chk_namespace(ctx, stmt, namespace_prefixes):
                 namespace_prefixes[0] + stmt.i_module.arg)
 
 def v_chk_module_name(ctx, stmt, modulename_prefixes):
-    if modulename_prefixes != []:
+    if modulename_prefixes:
         for prefix in modulename_prefixes:
-            if stmt.arg.find(prefix + '-') == 0:
+            if stmt.arg.startswith(prefix + '-'):
                 return
         if len(modulename_prefixes) == 1:
             err_add(ctx.errors, stmt.pos, 'LINT_BAD_MODULENAME_PREFIX_1',
@@ -255,7 +261,7 @@ def v_chk_module_name(ctx, stmt, modulename_prefixes):
             s = ", ".join(['"' + p + '-"' for p in modulename_prefixes[:-1]]) +\
             ', or "' + modulename_prefixes[-1] + '-"'
             err_add(ctx.errors, stmt.pos, 'LINT_BAD_MODULENAME_PREFIX_N', s)
-    elif stmt.arg.find('-') == -1:
+    elif '-' not in stmt.arg:
         # can't check much, but we can check that a prefix is used
         err_add(ctx.errors, stmt.pos, 'LINT_NO_MODULENAME_PREFIX', ())
 
@@ -286,14 +292,13 @@ def v_chk_mandatory_top_level(ctx, stmt):
 
 def v_chk_hyphenated_names(ctx, stmt):
     if stmt.keyword in grammar.stmt_map:
-        (arg_type, subspec) = grammar.stmt_map[stmt.keyword]
-        if ((arg_type == 'identifier' or arg_type == 'enum-arg') and
-            not_hyphenated(stmt.arg)):
+        arg_type, subspec = grammar.stmt_map[stmt.keyword]
+        if arg_type in ('identifier', 'enum-arg') and not_hyphenated(stmt.arg):
             error.err_add(ctx.errors, stmt.pos, 'LINT_NOT_HYPHENATED', stmt.arg)
 
 def not_hyphenated(name):
     ''' Returns True if name is not hyphenated '''
-    if name == None:
+    if name is None:
         return False
     # Check for upper-case and underscore
-    return (name != name.lower() or "_" in name)
+    return name != name.lower() or "_" in name

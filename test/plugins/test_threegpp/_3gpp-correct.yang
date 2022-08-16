@@ -1,0 +1,96 @@
+module _3gpp-correct {
+  yang-version 1.1;
+  namespace "urn:3gpp:sa5:_3gpp-correct";
+  prefix cor3gpp;
+  
+  import ietf-netconf-acm { prefix nacm; }
+
+  organization "3GPP SA5";
+  contact "https://www.3gpp.org/DynaReport/TSG-WG--S5--officials.htm?Itemid=464";
+  description "Correct version of the threegpp pyang plugin test file";
+  reference "3GPP TS 28.623";
+  
+  revision 2020-08-06 { reference "CR-0102"; }  
+
+  list main {
+    config false;
+    status deprecated;
+    description "First Managed Object";
+    leaf l { type uint8; }  
+    leaf ld { 
+      type uint8; 
+      description "la-desc";
+    }  
+    leaf-list ll { type uint8; }  
+    leaf-list lld { 
+      type uint8; 
+      description "lld-desc";
+    }
+    
+    uses g;
+    uses gd {
+      description usesDesc;
+    } 
+  }
+  
+  typedef tipWoDesc {
+    type string;
+  }
+  
+  typedef tipWithDesc {
+    type string;
+    description tipdesc;
+  }
+  
+  grouping g {
+    leaf ag { 
+      type enumeration {
+        enum ewithDesc {
+          value 1;
+          description edededed;
+      } 
+        enum ewoDesc ; 
+      }
+    }
+    
+    choice cc {
+      leaf case1 { type uint8; }
+      leaf-list case2 { type string; }
+    }
+    
+    choice ccwd {
+      leaf case1wd { 
+        type uint8; 
+        description case1wd-desc;
+      }
+      leaf-list case2wd { 
+        type string; 
+        description case2wd-desc;
+      }
+    }
+  }
+  
+  grouping gd {
+    description g-desc ;
+    leaf agd { 
+      type bits {
+        bit bwithDesc {
+          position 1;
+          description bdbdbd;
+      } 
+        bit bwoDesc ; 
+
+      }
+    }
+  }
+
+  augment /nacm:nacm {
+    leaf augWoDesc { type string; }
+  }  
+
+  augment /nacm:nacm {
+    description "Augment with description.";
+    leaf augWithDesc { type string; }
+  }  
+}
+

@@ -6,13 +6,17 @@ dist
 pyang.egg-info
 .cache
 # created during test:
+xpath_parsetab.py
 .pytest_cache
 .python-version
 *.rnc
 schemas.xml
 *.pyc
 *.egg-info
+*.idea
 .coverage*
+.profile*
+venv/
 /test/test_*/*.dsrl
 /test/test_*/*.rng
 /test/test_*/*.sch
@@ -28,4 +32,4 @@ schemas.xml
 /test/test_json/test-data-new.json
 /test/test_json/test-data.xml
 /test/test_xsd/*.xsd
-/test/test_yang/out/
+/test/test_*/out/

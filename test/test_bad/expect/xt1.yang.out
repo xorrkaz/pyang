@@ -11,7 +11,6 @@ xt1.yang:196: error: DUPLICATE_CHILD_NAME
 xt1.yang:206: error: DUPLICATE_CHILD_NAME
 xt1.yang:216: error: NEED_KEY_USES
 xt1.yang:226: error: RANGE_BOUNDS
-xt1.yang:232: error: TYPE_VALUE
 xt1.yang:232: error: RANGE_BOUNDS
 xt1.yang:246: error: EXPECTED_KEYWORD_2
 xt1.yang:265: error: TYPE_VALUE
@@ -35,4 +34,4 @@ xt4.yang:43: error: BAD_RESTRICTION
 xt4.yang:66: error: TYPE_VALUE
 xt4.yang:72: error: BAD_DEVIATE_ADD
 xt4.yang:78: error: BAD_DEVIATE_TYPE
-xt4.yang:84: error: BAD_DEVIATE_DEL
+xt4.yang:84: warning: XPATH_NODE_NOT_FOUND1

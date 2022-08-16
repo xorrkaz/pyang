@@ -1,0 +1,11 @@
+module basic {
+  namespace "urn:basic";
+  prefix basic;
+  description 'module';
+  container x {
+    description 'container';
+    leaf y {
+      type string;
+    }
+  }
+}

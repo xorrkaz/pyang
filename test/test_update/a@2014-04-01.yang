@@ -31,6 +31,14 @@ module a {
     }
   }
 
+  typedef my-union3 {
+     type union {
+       type uint32;
+       type string;
+     }
+     default "dummy";
+  }
+
   feature foo {
     status obsolete;
   }
@@ -55,7 +63,6 @@ module a {
     leaf-list baz {
       type string;
       units fo;
-      max-elements 2;
     }
     leaf ggg {
       type string;
@@ -71,9 +78,9 @@ module a {
       }
     }
     leaf bar {
-      if-feature foo;
+      mandatory true;
       type string;
-      must "foo and baz";
+      must "../arne/foo and ../baz";
     }
     uses gg {
       status obsolete;
@@ -117,16 +124,24 @@ module a {
         }
       }
     }
+    leaf a_union {
+        type my-union1;
+        default "my-default-1";
+    }
+    leaf b_union {
+        type my-union3;
+        default "my-default-2";
+    }
   }
 
   identity xx;
   identity yy {
     base xx;
+    base x;
   }
 
 
   rpc foo {
-    if-feature foo;
     input {
       leaf foo {
         type string;
@@ -140,4 +155,21 @@ module a {
     }
   }
 
+  leaf bbb {
+    type uint16 {
+      range "5..5000 | 5500..6000";
+    }
+  }
+
+  leaf-list baz2 {
+    type string;
+    min-elements 1;
+    max-elements 4;
+  }
+
+  leaf-list baz3 {
+    type string;
+    min-elements 2;
+    max-elements 4;
+  }
 }

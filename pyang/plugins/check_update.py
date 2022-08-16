@@ -1,6 +1,6 @@
 """YANG module update check tool
 This plugin checks if an updated version of a module follows
-the rules defined in Section 10 of RFC 6020.
+the rules defined in Section 10 of RFC 6020 and Section 11 of RFC 7950.
 """
 
 import optparse
@@ -8,13 +8,16 @@ import sys
 import os
 import io
 
-import pyang
+from pyang import context
+from pyang import repository
 from pyang import plugin
 from pyang import statements
 from pyang import error
 from pyang import util
 from pyang import types
 from pyang.error import err_add
+
+sxmod = 'ietf-yang-structure-ext'
 
 def pyang_plugin_init():
     plugin.register_plugin(CheckUpdatePlugin())
@@ -26,7 +29,7 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
                                  metavar="OLDMODULE",
                                  dest="check_update_from",
                                  help="Verify that upgrade from OLDMODULE" \
-                                      " follows RFC 6020 rules."),
+                                      " follows RFC 6020 and 7950 rules."),
             optparse.make_option("-P", "--check-update-from-path",
                                  dest="old_path",
                                  default=[],
@@ -34,62 +37,91 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
                                  help=os.pathsep + "-separated search path" \
                                      " for yin and yang modules used by" \
                                      " OLDMODULE"),
+            optparse.make_option("-D", "--check-update-from-deviation-module",
+                                 dest="old_deviation",
+                                 default=[],
+                                 action="append",
+                                 help="Old deviation module of the OLDMODULE." \
+                                      " This option can be given multiple" \
+                                      " times."),
+            optparse.make_option("--check-update-include-structures",
+                                 dest="check_update_structures",
+                                 action="store_true",
+                                 help="Check sx:structures."),
             ]
         optparser.add_options(optlist)
 
-        # register our error codes
         error.add_error_code(
-            'CHK_INVALID_MODULENAME', 1,
+            'CHK_INVALID_MODULENAME', 3,
             "the module's name MUST NOT be changed"
-            + " (RFC 6020: 10, p3)")
+            + " (RFC 6020: sec. 10, p3)")
         error.add_error_code(
-            'CHK_INVALID_NAMESPACE', 1,
+            'CHK_INVALID_MODULENAME_v1.1', 3,
+            "the module's name MUST NOT be changed"
+            + " (RFC 7950: sec. 11, p3)")
+        error.add_error_code(
+            'CHK_INVALID_NAMESPACE', 3,
             "the module's namespace MUST NOT be changed"
-            + " (RFC 6020: 10, p3)")
+            + " (RFC 6020: sec. 10, p3)")
         error.add_error_code(
-            'CHK_NO_REVISION', 1,
+            'CHK_INVALID_NAMESPACE_v1.1', 3,
+            "the module's namespace MUST NOT be changed"
+            + " (RFC 7950: sec. 11, p3)")
+        error.add_error_code(
+            'CHK_NO_REVISION', 3,
             "a revision statement MUST be present"
-            + " (RFC 6020: 10, p2)")
+            + " (RFC 6020: sec. 10, p2)")
         error.add_error_code(
-            'CHK_BAD_REVISION', 1,
+            'CHK_NO_REVISION_v1.1', 3,
+            "a revision statement MUST be present"
+            + " (RFC 7950: sec. 11, p2)")
+        error.add_error_code(
+            'CHK_BAD_REVISION', 3,
             "new revision %s is not newer than old revision %s"
-            + " (RFC 6020: 10, p2)")
+            + " (RFC 6020: sec. 10, p2)")
         error.add_error_code(
-            'CHK_DEF_REMOVED', 1,
+            'CHK_BAD_REVISION_v1.1', 3,
+            "new revision %s is not newer than old revision %s"
+            + " (RFC 7950: sec. 11, p2)")
+        error.add_error_code(
+            'CHK_DEF_REMOVED', 3,
             "the %s '%s', defined at %s is illegally removed")
         error.add_error_code(
-            'CHK_DEF_ADDED', 1,
+            'CHK_DEF_ADDED', 3,
             "the %s '%s' is illegally added")
         error.add_error_code(
-            'CHK_DEF_CHANGED', 1,
+            'CHK_DEF_ADDED2', 3,
+            "the %s '%s' is illegally added in %s %s")
+        error.add_error_code(
+            'CHK_DEF_CHANGED', 3,
             "the %s '%s' is illegally changed from '%s'")
         error.add_error_code(
-            'CHK_INVALID_STATUS', 1,
+            'CHK_INVALID_STATUS', 3,
             "new status %s is not valid since the old status was %s")
         error.add_error_code(
-            'CHK_STATUS_OBSOLETE', 1,
+            'CHK_STATUS_OBSOLETE', 3,
             "obsoleting a node is not backwards compatible (move from %s"
             + " to obsolete)")
         error.add_error_code(
-            'CHK_CHILD_KEYWORD_CHANGED', 1,
+            'CHK_CHILD_KEYWORD_CHANGED', 3,
             "the %s '%s' is illegally changed to a %s")
         error.add_error_code(
-            'CHK_MANDATORY_CONFIG', 1,
+            'CHK_MANDATORY_CONFIG', 3,
             "the node %s is changed to config true, but it is mandatory")
         error.add_error_code(
-            'CHK_NEW_MANDATORY', 1,
+            'CHK_NEW_MANDATORY', 3,
             "the mandatory node %s is illegally added")
         error.add_error_code(
-            'CHK_BAD_CONFIG', 1,
+            'CHK_BAD_CONFIG', 3,
             "the node %s is changed to config false")
         error.add_error_code(
-            'CHK_NEW_MUST', 1,
+            'CHK_NEW_MUST', 3,
             "a new must expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_MUST', 4,
             "this must expression may be more constrained than before")
         error.add_error_code(
-            'CHK_NEW_WHEN', 1,
+            'CHK_NEW_WHEN', 3,
             "a new when expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_WHEN', 4,
@@ -98,44 +130,56 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_UNDECIDED_PRESENCE', 4,
             "this presence expression may be different than before")
         error.add_error_code(
-            'CHK_IMPLICIT_DEFAULT', 1,
+            'CHK_IMPLICIT_DEFAULT', 3,
             "the leaf had an implicit default")
         error.add_error_code(
-            'CHK_BASE_TYPE_CHANGED', 1,
+            'CHK_BASE_TYPE_CHANGED', 3,
             "the base type has illegally changed from %s to %s")
         error.add_error_code(
-            'CHK_LEAFREF_PATH_CHANGED', 1,
+            'CHK_LEAFREF_PATH_CHANGED', 3,
             "the leafref's path has illegally changed")
         error.add_error_code(
-            'CHK_ENUM_VALUE_CHANGED', 1,
+            'CHK_ENUM_VALUE_CHANGED', 3,
             "the value for enum '%s', has changed from %s to %s"
-            + " (RFC 6020: 10, p5, bullet 1)")
+            + " (RFC 6020: sec. 10, p5, bullet 1)")
         error.add_error_code(
-            'CHK_BIT_POSITION_CHANGED', 1,
+            'CHK_ENUM_VALUE_CHANGED_v1.1', 3,
+            "the value for enum '%s', has changed from %s to %s"
+            + " (RFC 7950: sec. 11, p5, bullet 1)")
+        error.add_error_code(
+            'CHK_BIT_POSITION_CHANGED', 3,
             "the position for bit '%s', has changed from %s to %s"
-            + " (RFC 6020: 10, p5, bullet 2)")
+            + " (RFC 6020: sec. 10, p5, bullet 2)")
         error.add_error_code(
-            'CHK_RESTRICTION_CHANGED', 1,
+            'CHK_BIT_POSITION_CHANGED_v1.1', 3,
+            "the position for bit '%s', has changed from %s to %s"
+            + " (RFC 7950: sec. 11, p5, bullet 2)")
+        error.add_error_code(
+            'CHK_RESTRICTION_CHANGED', 3,
             "the %s has been illegally restricted"
-            + " (RFC 6020: 10, p5, bullet 3)")
+            + " (RFC 6020: sec. 10, p5, bullet 3)")
         error.add_error_code(
-            'CHK_UNION_TYPES', 1,
+            'CHK_RESTRICTION_CHANGED_v1.1', 3,
+            "the %s has been illegally restricted"
+            + " (RFC 7950: sec. 11, p5, bullet 3)")
+        error.add_error_code(
+            'CHK_UNION_TYPES', 3,
             "the member types in the union have changed")
 
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.check_update_from:
             return
 
-        check_update(ctx, ctx.opts.check_update_from, modules[0])
+        check_update(ctx, modules[0])
 
-def check_update(ctx, oldfilename, newmod):
+def check_update(ctx, newmod):
     oldpath = os.pathsep.join(ctx.opts.old_path)
-    olddir = os.path.dirname(oldfilename)
+    olddir = os.path.dirname(ctx.opts.check_update_from)
     if olddir == '':
         olddir = '.'
     oldpath += os.pathsep + olddir
-    oldrepo = pyang.FileRepository(oldpath, use_env=False)
-    oldctx = pyang.Context(oldrepo)
+    oldrepo = repository.FileRepository(oldpath, use_env=False)
+    oldctx = context.Context(oldrepo)
     oldctx.opts = ctx.opts
     oldctx.lax_xpath_checks = ctx.lax_xpath_checks
     oldctx.lax_quote_checks = ctx.lax_quote_checks
@@ -149,22 +193,27 @@ def check_update(ctx, oldfilename, newmod):
     for p in plugin.plugins:
         p.setup_ctx(oldctx)
 
-    oldfilename = ctx.opts.check_update_from
-    try:
-        fd = io.open(oldfilename, "r", encoding="utf-8")
-        text = fd.read()
-    except IOError as ex:
-        sys.stderr.write("error %s: %s\n" % (oldfilename, str(ex)))
-        sys.exit(1)
-    oldmod = oldctx.add_module(oldfilename, text)
+    for oldfilename in [ctx.opts.check_update_from] + ctx.opts.old_deviation:
+        try:
+            fd = io.open(oldfilename, "r", encoding="utf-8")
+            text = fd.read()
+        except IOError as ex:
+            sys.stderr.write("error %s: %s\n" % (oldfilename, ex))
+            sys.exit(1)
+        if oldfilename in ctx.opts.old_deviation:
+            oldctx.add_module(oldfilename, text)
+        else:
+            oldmod = oldctx.add_module(oldfilename, text)
+    oldctx.validate()
+
     ctx.errors.extend(oldctx.errors)
 
     if oldmod is None:
         return
 
-    for (epos, etag, eargs) in ctx.errors:
-        if (epos.ref in (newmod.pos.ref, oldmod.pos.ref) and
-            error.is_error(error.err_level(etag))):
+    for epos, etag, eargs in ctx.errors:
+        if (epos.ref in (newmod.pos.ref, oldmod.pos.ref)
+            and error.is_error(error.err_level(etag))):
             return
 
     if ctx.opts.verbose:
@@ -173,6 +222,11 @@ def check_update(ctx, oldfilename, newmod):
             (m, r, (fmt, filename)) = x
             print("  %s" % filename)
         print("")
+
+    chk_module(ctx, oldmod, newmod)
+
+
+def chk_module(ctx, oldmod, newmod):
 
     chk_modulename(oldmod, newmod, ctx)
 
@@ -201,25 +255,34 @@ def check_update(ctx, oldfilename, newmod):
     for olds in oldmod.search('extension'):
         chk_extension(olds, newmod, ctx)
 
+    if ctx.opts.check_update_structures:
+        for olds in oldmod.search((sxmod, 'structure')):
+            chk_structure(olds, newmod, ctx)
+    chk_augment(oldmod, newmod, ctx)
+
     chk_i_children(oldmod, newmod, ctx)
 
 def chk_modulename(oldmod, newmod, ctx):
     if oldmod.arg != newmod.arg:
-        err_add(ctx.errors, newmod.pos, 'CHK_INVALID_MODULENAME', ())
+        errcode = verrcode('CHK_INVALID_MODULENAME', newmod)
+        err_add(ctx.errors, newmod.pos, errcode, ())
 
 def chk_namespace(oldmod, newmod, ctx):
     oldns = oldmod.search_one('namespace')
     newns = newmod.search_one('namespace')
     if oldns is not None and newns is not None and oldns.arg != newns.arg:
+        errcode = verrcode('CHK_INVALID_NAMESPACE', newmod)
         err_add(ctx.errors, newmod.pos, 'CHK_INVALID_NAMESPACE', ())
 
 def chk_revision(oldmod, newmod, ctx):
     oldrev = get_latest_revision(oldmod)
     newrev = get_latest_revision(newmod)
     if newrev is None:
-        err_add(ctx.errors, newmod.pos, 'CHK_NO_REVISION', ())
+        errcode = verrcode('CHK_NO_REVISION', newmod)
+        err_add(ctx.errors, newmod.pos, errcode, ())
     elif (oldrev is not None) and (oldrev >= newrev):
-        err_add(ctx.errors, newmod.pos, 'CHK_BAD_REVISION', (newrev, oldrev))
+        errcode = verrcode('CHK_BAD_REVISION', newmod)
+        err_add(ctx.errors, newmod.pos, errcode, (newrev, oldrev))
 
 def get_latest_revision(m):
     revs = [r.arg for r in m.search('revision')]
@@ -230,34 +293,48 @@ def get_latest_revision(m):
         return None
 
 def chk_feature(olds, newmod, ctx):
-    chk_stmt(olds, newmod, ctx)
+    chk_stmt_definitions(olds, newmod, ctx, newmod.i_features)
 
 def chk_identity(olds, newmod, ctx):
-    news = chk_stmt(olds, newmod, ctx)
+    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_identities)
     if news is None:
         return
     # make sure the base isn't changed (other than syntactically)
-    oldbase = olds.search_one('base')
-    newbase = news.search_one('base')
-    if oldbase is None and newbase is not None:
-        err_def_added(newbase, ctx)
-    elif newbase is None and oldbase is not None:
-        err_def_removed(oldbase, news, ctx)
-    elif oldbase is None and newbase is None:
-        pass
-    elif ((oldbase.i_identity.i_module.i_modulename !=
-           newbase.i_identity.i_module.i_modulename)
-          or (oldbase.i_identity.arg != newbase.i_identity.arg)):
-        err_def_changed(oldbase, newbase, ctx)
+    oldbases = olds.search('base')
+    newbases = news.search('base')
+    if newmod.i_version == '1.1':
+        old_ids = [oldbase.i_identity.arg for oldbase in oldbases]
+        new_ids = [newbase.i_identity.arg for newbase in newbases]
+        for old_id in set(old_ids) - set(new_ids):
+            err_def_removed(oldbases[old_ids.index(old_id)], news, ctx)
+        for old_id in set(old_ids) & set(new_ids):
+            oldbase = oldbases[old_ids.index(old_id)]
+            newbase = newbases[new_ids.index(old_id)]
+            if oldbase.i_identity.i_module.i_modulename != \
+               newbase.i_identity.i_module.i_modulename:
+                err_def_changed(oldbase, newbase, ctx)
+    else:
+        oldbase = next(iter(oldbases), None)
+        newbase = next(iter(newbases), None)
+        if oldbase is None and newbase is not None:
+            err_def_added(newbase, ctx)
+        elif newbase is None and oldbase is not None:
+            err_def_removed(oldbase, news, ctx)
+        elif oldbase is None and newbase is None:
+            pass
+        elif ((oldbase.i_identity.i_module.i_modulename !=
+               newbase.i_identity.i_module.i_modulename)
+              or (oldbase.i_identity.arg != newbase.i_identity.arg)):
+            err_def_changed(oldbase, newbase, ctx)
 
 def chk_typedef(olds, newmod, ctx):
-    news = chk_stmt(olds, newmod, ctx)
+    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_typedefs)
     if news is None:
         return
     chk_type(olds.search_one('type'), news.search_one('type'), ctx)
 
 def chk_grouping(olds, newmod, ctx):
-    news = chk_stmt(olds, newmod, ctx)
+    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_groupings)
     if news is None:
         return
     chk_i_children(olds, news, ctx)
@@ -274,8 +351,14 @@ def chk_notification(olds, newmod, ctx):
         return
     chk_i_children(olds, news, ctx)
 
-def chk_extension(olds, newmod, ctx):
+def chk_structure(olds, newmod, ctx):
     news = chk_stmt(olds, newmod, ctx)
+    if news is None:
+        return
+    chk_i_children(olds, news, ctx)
+
+def chk_extension(olds, newmod, ctx):
+    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_extensions)
     if news is None:
         return
     oldarg = olds.search_one('argument')
@@ -295,6 +378,43 @@ def chk_extension(olds, newmod, ctx):
               newyin.arg != oldyin.arg):
             err_def_changed(oldyin, newyin, ctx)
 
+
+def chk_augment(oldmod, newmod, ctx):
+    # group augment of same target together, and compare with all
+    # augment of same target in newmod
+    targets = {}
+    for olds in oldmod.search('augment'):
+        if olds.arg in targets:
+            targets[olds.arg].extend(olds.i_children)
+        else:
+            targets[olds.arg] = list(olds.i_children) # copy
+    for t in targets:
+        newchs = []
+        # this is not quite correct; it should be ok to change the
+        # prefix, so augmenting /x:a in the old module, but /y:a in the
+        # new module, if x and y are prefixes to the same module, should
+        # be ok.
+        for news in newmod.search('augment', arg=t):
+            newchs.extend(news.i_children)
+
+        if len(newchs) == 0:
+            for olds in oldmod.search('augment', arg=t):
+                err_def_removed(olds, newmod, ctx)
+        else:
+            for oldch in targets[t]:
+                chk_children(oldch, newchs, newmod, ctx)
+
+def chk_stmt_definitions(olds, newp, ctx, definitions):
+    news = None
+    if olds.arg in definitions:
+        news = definitions[olds.arg]
+    if news is None:
+        err_def_removed(olds, newp, ctx)
+        return None
+    chk_status(olds, news, ctx)
+    chk_if_feature(olds, news, ctx)
+    return news
+
 def chk_stmt(olds, newp, ctx):
     news = newp.search_one(olds.keyword, arg = olds.arg)
     if news is None:
@@ -307,21 +427,26 @@ def chk_stmt(olds, newp, ctx):
 def chk_i_children(old, new, ctx):
     for oldch in old.i_children:
         chk_child(oldch, new, ctx)
-    # chk_child removes all old children
-    for newch in new.i_children:
+
+    old_child_args = [oldch.arg for oldch in old.i_children]
+    added_new_children = [new_child for new_child in new.i_children if new_child.arg not in old_child_args]
+    for newch in added_new_children:
         if statements.is_mandatory_node(newch):
             err_add(ctx.errors, newch.pos, 'CHK_NEW_MANDATORY', newch.arg)
 
 def chk_child(oldch, newp, ctx):
+    chk_children(oldch, newp.i_children, newp, ctx)
+
+def chk_children(oldch, newchs, newp, ctx):
     newch = None
-    for ch in newp.i_children:
+    for ch in newchs:
         if ch.arg == oldch.arg:
             newch = ch
             break
     if newch is None:
         err_def_removed(oldch, newp, ctx)
         return
-    newp.i_children.remove(newch)
+
     if newch.keyword != oldch.keyword:
         err_add(ctx.errors, newch.pos, 'CHK_CHILD_KEYWORD_CHANGED',
                 (oldch.keyword, newch.arg, newch.keyword))
@@ -374,16 +499,22 @@ def chk_status(old, new, ctx):
                 (newstatus.arg, oldstatus.arg))
 
 def chk_if_feature(old, new, ctx):
+    # make sure no if-features are removed if node is mandatory
+    for s in old.search('if-feature'):
+        if new.search_one('if-feature', arg=s.arg) is None:
+            if statements.is_mandatory_node(new):
+                err_def_removed(s, new, ctx)
+
     # make sure no if-features are added
     for s in new.search('if-feature'):
-        if old.search_one('if-feature', arg = s.arg) is None:
-            err_def_added(s, ctx)
+        if old.search_one('if-feature', arg=s.arg) is None:
+            err_def_added2(s, new, ctx)
 
 def chk_config(old, new, ctx):
-    if old.i_config == False and new.i_config == True:
+    if not old.i_config and new.i_config:
         if statements.is_mandatory_node(new):
-            err_add(ctx.errors, newch.pos, 'CHK_MANDATORY_CONFIG', new.arg)
-    elif old.i_config == True and new.i_config == False:
+            err_add(ctx.errors, new.pos, 'CHK_MANDATORY_CONFIG', new.arg)
+    elif old.i_config and not new.i_config:
         err_add(ctx.errors, new.pos, 'CHK_BAD_CONFIG', new.arg)
 
 def chk_must(old, new, ctx):
@@ -414,7 +545,11 @@ def chk_when(old, new, ctx):
         if neww is not None:
             newwhen.remove(neww)
             oldwhen.remove(oldw)
-    if len(oldwhen) == 0:
+    if new.i_module.i_version == '1.1':
+        if len(newwhen) == 0:
+            # this is good; maybe some old whens were removed
+            return
+    elif len(oldwhen) == 0:
         for neww in newwhen:
             err_add(ctx.errors, neww.pos, 'CHK_NEW_WHEN', ())
     else:
@@ -443,7 +578,7 @@ def chk_default(old, new, ctx):
         oldtype = old.search_one('type')
         if (oldtype.i_typedef is not None and
             hasattr(oldtype.i_typedef, 'i_default_str') and
-            oldtype.i_typedef.i_default_str is not None and
+            oldtype.i_typedef.i_default is not None and
             oldtype.i_typedef.i_default_str != newdefault.arg):
             err_add(ctx.errors, newdefault.pos, 'CHK_IMPLICIT_DEFAULT', ())
     elif olddefault.arg != newdefault.arg:
@@ -469,10 +604,10 @@ def chk_min_max(old, new, ctx):
         err_def_changed(oldmin, newmin, ctx)
     oldmax = old.search_one('max-elements')
     newmax = new.search_one('max-elements')
-    if oldmax is None:
+    if newmax is None:
         pass
-    elif newmax is None:
-        err_def_removed(oldmax, new, ctx)
+    elif oldmax is None:
+        err_def_added(newmax, ctx)
     elif int(newmax.arg) < int(oldmax.arg):
         err_def_changed(oldmax, newmax, ctx)
 
@@ -504,14 +639,8 @@ def chk_key(old, new, ctx):
         if len(oldks) != len(newks):
             err_def_changed(oldkey, newkey, ctx)
         else:
-            def name(x):
-                if x.find(":") == -1:
-                    return x
-                else:
-                    [prefix, name] = x.split(':', 1)
-                    return name
-            for (ok, nk) in zip(oldks, newks):
-                if name(ok) != name(nk):
+            for ok, nk in zip(oldks, newks):
+                if util.split_identifier(ok)[1] != util.split_identifier(nk)[1]:
                     err_def_changed(oldkey, newkey, ctx)
                     return
 
@@ -521,9 +650,9 @@ def chk_unique(old, new, ctx):
     if not hasattr(old, 'i_unique') or not hasattr(new, 'i_unique'):
         return
     oldunique = []
-    for (u, l) in old.i_unique:
+    for u, l in old.i_unique:
         oldunique.append((u, [s.arg for s in l]))
-    for (u, l) in new.i_unique:
+    for u, l in new.i_unique:
         # check if this unique was present before
         o = util.keysearch([s.arg for s in l], 1, oldunique)
         if o is not None:
@@ -583,13 +712,17 @@ def chk_integer(old, new, oldts, newts, ctx):
 def chk_range(old, new, oldts, newts, ctx):
     ots = old.i_type_spec
     nts = new.i_type_spec
-    if (type(ots) == types.RangeTypeSpec and
-        type(nts) == types.RangeTypeSpec):
+    if not isinstance(nts, types.RangeTypeSpec):
+        return
+    if isinstance(ots, types.RangeTypeSpec):
         tmperrors = []
         types.validate_ranges(tmperrors, new.pos, ots.ranges, new)
-        if tmperrors != []:
-            err_add(ctx.errors, new.pos, 'CHK_RESTRICTION_CHANGED',
-                    'range')
+        if tmperrors:
+            errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
+            err_add(ctx.errors, new.pos, errcode, 'range')
+    else:
+        err_add(ctx.errors, nts.ranges_pos, 'CHK_DEF_ADDED',
+                ('range', str(nts.ranges)))
 
 def chk_decimal64(old, new, oldts, newts, ctx):
     oldbasets = get_base_type(oldts)
@@ -613,24 +746,26 @@ def chk_string(old, new, oldts, newts, ctx):
 
 def chk_enumeration(old, new, oldts, newts, ctx):
     # verify that all old enums are still in new, with the same values
-    for (name, val) in oldts.enums:
+    for name, val in oldts.enums:
         n = util.keysearch(name, 0, newts.enums)
         if n is None:
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
                     ('enum', name, old.pos))
         elif n[1] != val:
-            err_add(ctx.errors, new.pos, 'CHK_ENUM_VALUE_CHANGED',
+            errcode = verrcode('CHK_ENUM_VALUE_CHANGED', new)
+            err_add(ctx.errors, new.pos, errcode,
                     (name, val, n[1]))
 
 def chk_bits(old, new, oldts, newts, ctx):
     # verify that all old bits are still in new, with the same positions
-    for (name, pos) in oldts.bits:
+    for name, pos in oldts.bits:
         n = util.keysearch(name, 0, newts.bits)
         if n is None:
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
                     ('bit', name, old.pos))
         elif n[1] != pos:
-            err_add(ctx.errors, new.pos, 'CHK_BIT_POSITION_CHANGED',
+            errcode = verrcode('CHK_BIT_POSITION_CHANGED', new)
+            err_add(ctx.errors, new.pos, errcode,
                     (name, pos, n[1]))
 
 def chk_binary(old, new, oldts, newts, ctx):
@@ -659,16 +794,11 @@ def chk_identityref(old, new, oldts, newts, ctx):
     # verify that the bases are the same
     extra = [n for n in newts.idbases]
     for oidbase in oldts.idbases:
-        found = False
         for nidbase in newts.idbases:
             if (nidbase.i_module.i_modulename ==
-                oidbase.i_module.i_modulename and
-                nidbase.arg == oidbase.arg):
-                found = True
+                    oidbase.i_module.i_modulename and
+                    nidbase.arg.split(':')[-1] == oidbase.arg.split(':')[-1]):
                 extra.remove(nidbase)
-        if not found:
-            err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
-                    ('base', oidbase.arg, old.pos))
     for n in extra:
         err_add(ctx.errors, n.pos, 'CHK_DEF_ADDED',
                 ('base', n.arg))
@@ -681,7 +811,7 @@ def chk_union(old, new, oldts, newts, ctx):
     if len(newts.types) != len(oldts.types):
         err_add(ctx.errors, new.pos, 'CHK_UNION_TYPES', ())
     else:
-        for (o,n) in zip(oldts.types, newts.types):
+        for o, n in zip(oldts.types, newts.types):
             chk_type(o, n, ctx)
 
 def chk_dummy(old, new, oldts, newts, ctx):
@@ -709,12 +839,31 @@ chk_type_func = \
    'union': chk_union}
 
 
+def verrcode(basecode, stmt):
+    try:
+        if stmt.i_module.i_version == '1':
+            return basecode
+        else:
+            return basecode + '_v' + stmt.i_module.i_version
+    except AttributeError:
+        return basecode
+
 def err_def_added(new, ctx):
-    err_add(ctx.errors, new.pos, 'CHK_DEF_ADDED', (new.keyword, new.arg))
+    new_arg = new.arg
+    if new.keyword == 'presence':
+        new_arg = new.parent.arg
+    err_add(ctx.errors, new.pos, 'CHK_DEF_ADDED', (new.keyword, new_arg))
+
+def err_def_added2(new, node, ctx):
+    err_add(ctx.errors, new.pos, 'CHK_DEF_ADDED2',
+            (new.keyword, new.arg, node.keyword, node.arg))
 
 def err_def_removed(old, newp, ctx):
+    old_arg = old.arg
+    if old.keyword == 'presence':
+        old_arg = old.parent.arg
     err_add(ctx.errors, newp.pos, 'CHK_DEF_REMOVED',
-            (old.keyword, old.arg, old.pos))
+            (old.keyword, old_arg, old.pos))
 
 def err_def_changed(old, new, ctx):
     err_add(ctx.errors, new.pos, 'CHK_DEF_CHANGED',

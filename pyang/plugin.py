@@ -7,8 +7,10 @@ import pkg_resources
 plugins = []
 """List of registered PyangPlugin instances"""
 
-def init(plugindirs=[]):
+def init(plugindirs=None):
     """Initialize the plugin framework"""
+    if plugindirs is None:
+        plugindirs = []
 
     # initialize the builtin plugins
     from .translators import yang,yin,dsdl
@@ -21,8 +23,9 @@ def init(plugindirs=[]):
         plugin_init = ep.load()
         plugin_init()
 
-    # search for plugins in std directory
+    # search for plugins in std directories (plugins directory first)
     basedir = os.path.split(sys.modules['pyang'].__file__)[0]
+    plugindirs.insert(0, basedir + "/transforms")
     plugindirs.insert(0, basedir + "/plugins")
 
     # add paths from env
@@ -37,15 +40,28 @@ def init(plugindirs=[]):
             fnames = os.listdir(plugindir)
         except OSError:
             continue
+        modnames = []
         for fname in fnames:
-            if not fname.startswith(".#") and fname.endswith(".py") and \
-               fname != '__init__.py':
-                pluginmod = __import__(fname[:-3])
-                try:
-                    pluginmod.pyang_plugin_init()
-                except AttributeError as s:
-                    print(pluginmod.__dict__)
-                    raise AttributeError(pluginmod.__file__ + ': ' + str(s))
+            if (fname.startswith(".#") or
+                fname.startswith("__init__.py") or
+                fname.endswith("_flymake.py") or
+                fname.endswith("_flymake.pyc")):
+                pass
+            elif fname.endswith(".py"):
+                modname = fname[:-3]
+                if modname not in modnames:
+                    modnames.append(modname)
+            elif fname.endswith(".pyc"):
+                modname = fname[:-4]
+                if modname not in modnames:
+                    modnames.append(modname)
+        for modname in modnames:
+            pluginmod = __import__(modname)
+            try:
+                pluginmod.pyang_plugin_init()
+            except AttributeError as s:
+                print(pluginmod.__dict__)
+                raise AttributeError(pluginmod.__file__ + ': ' + str(s))
         sys.path = syspath
 
 def register_plugin(plugin):
@@ -91,6 +107,17 @@ class PyangPlugin(object):
         name.
         """
         return
+
+    def add_transform(self, xforms):
+        """Add a transform to the pyang program.
+
+        `xforms` is a dict which maps the transform name string to a plugin
+        instance.
+
+        Override this method and update `xforms` with the transform name.
+        """
+        return
+
     def add_opts(self, optparser):
         """Add command line options to the pyang program.
 
@@ -110,7 +137,17 @@ class PyangPlugin(object):
         return
 
     def setup_fmt(self, ctx):
-        """Modify the Context at setup time.  Called for the selected plugin.
+        """Modify the Context at setup time.  Called for the selected
+        output format plugin.
+
+        Override this method to modify the Context before the module
+        repository is accessed.
+        """
+        return
+
+    def setup_xform(self, ctx):
+        """Modify the Context at setup time.  Called for the selected
+        transform plugin.
 
         Override this method to modify the Context before the module
         repository is accessed.
@@ -139,12 +176,22 @@ class PyangPlugin(object):
         have been validated"""
         return
 
-    def emit(self, ctx, modules, writef):
+    def emit(self, ctx, modules, fd):
         """Produce the plugin output.
 
         Override this method to perform the output conversion.
-        `writef` is a function that takes one string to print as argument.
+        `fd` is a file-like object open for writing.
 
         Raise error.EmitError on failure.
         """
         return
+
+    def transform(self, ctx, modules):
+        """Transform the modules (called after modules have been validated).
+
+        Override this method to modify the modules.
+        Return `True` to indicate either that none of the modifications
+        require modules to be re-validated or that the modules have already
+        been re-validated.
+
+        Raise error.TransformError on failure."""
