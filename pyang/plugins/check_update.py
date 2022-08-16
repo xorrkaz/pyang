@@ -67,6 +67,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_INVALID_STATUS', 1,
             "new status %s is not valid since the old status was %s")
         error.add_error_code(
+            'CHK_STATUS_OBSOLETE', 1,
+            "obsoleting a node is not backwards compatible (move from %s"
+            + " to obsolete)")
+        error.add_error_code(
             'CHK_CHILD_KEYWORD_CHANGED', 1,
             "the %s '%s' is illegally changed to a %s")
         error.add_error_code(
@@ -347,6 +351,17 @@ def chk_child(oldch, newp, ctx):
 def chk_status(old, new, ctx):
     oldstatus = old.search_one('status')
     newstatus = new.search_one('status')
+    if newstatus and newstatus.arg == 'obsolete':
+        # Check obsolete for YANG Module Versioning
+        # reference: draft-ietf-netmod-yang-module-versioning
+        if oldstatus is None:
+            err_add(ctx.errors, new.pos, 'CHK_STATUS_OBSOLETE',
+                    ("(implicit) current"))
+        elif oldstatus.arg != 'obsolete':
+            err_add(ctx.errors, new.pos, 'CHK_STATUS_OBSOLETE',
+                    (oldstatus.arg))
+
+        return
     if oldstatus is None or oldstatus.arg == 'current':
         # any new status is ok
         return
