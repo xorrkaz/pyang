@@ -21,6 +21,7 @@ class IETFPlugin(lint.LintPlugin):
         self.found_8174 = False
         self.found_tlp = False
         self.mmap = {}
+        self.first_revision = True
 
         lint.LintPlugin.__init__(self)
         self.namespace_prefixes = ['urn:ietf:params:xml:ns:yang:']
@@ -52,6 +53,10 @@ class IETFPlugin(lint.LintPlugin):
             'grammar', ['description'],
             lambda ctx, s: self.v_chk_description(ctx, s))
 
+        statements.add_validation_fun(
+            'grammar', ['revision'],
+            lambda ctx, s: self.v_chk_revision(ctx, s))
+
         # register our error codes
         error.add_error_code(
             'IETF_MISSING_RFC8174', 4,
@@ -71,6 +76,12 @@ class IETFPlugin(lint.LintPlugin):
             'RFC 8407: Appendix B: '
             + 'The text about which RFC this module is part of seems to be'
             + ' missing or is not correct'
+            + ' (see pyang --ietf-help for details).')
+
+        error.add_error_code(
+            'IETF_MISSING_YANG_SEMVER', 4,
+            'RFC XXXX: 6.1: '
+            + 'The latest revision is missing a YANG Semver statement'
             + ' (see pyang --ietf-help for details).')
 
     def pre_validate_ctx(self, ctx, modules):
@@ -109,6 +120,15 @@ class IETFPlugin(lint.LintPlugin):
             if re_2119_keywords.search(arg) is not None:
                 self.mmap[s.i_module.arg]['found_2119_keywords'] = True
                 self.mmap[s.i_module.arg]['description_pos'] = s.pos
+
+    def v_chk_revision(self, ctx, s):
+        if not self.first_revision:
+            return
+        if s.search_one(('ietf-yang-semver', 'version')) is None:
+            err_add(ctx.errors, s.pos,
+                    'IETF_MISSING_YANG_SEMVER', ())
+
+        self.first_revision = False
 
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.ietf:
@@ -153,6 +173,9 @@ must contain the following text:
      'MAY', and 'OPTIONAL' in this document are to be interpreted as
      described in BCP 14 (RFC 2119) (RFC 8174) when, and only when,
      they appear in all capitals, as shown here.
+
+All IETF and IANA modules must contain a YANG Semver version statement
+in their latest revision statement per RFC XXXX Section 6.1.
 """)
 
 rfc8174_str = \
