@@ -1,6 +1,6 @@
 """YANG Semver plugin
 
-Verifies the version of YANG revisions per RFCXXXX
+Verifies the YANG Semver version extension of YANG revisions per RFCXXXX
 """
 
 import re
@@ -8,7 +8,6 @@ import re
 from pyang import plugin
 from pyang import syntax
 from pyang import grammar
-from pyang import statements
 
 yang_semver_module_name = 'ietf-yang-semver'
 
