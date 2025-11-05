@@ -1,6 +1,7 @@
 """YANG module update check tool
 This plugin checks if an updated version of a module follows
-the rules defined in Section 10 of RFC 6020 and Section 11 of RFC 7950.
+the rules defined in Section 10 of RFC 6020, Section 11 of RFC 7950
+and Section 3.1 of RFC XXXX.
 """
 
 import optparse
@@ -29,7 +30,7 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
                                  metavar="OLDMODULE",
                                  dest="check_update_from",
                                  help="Verify that upgrade from OLDMODULE" \
-                                      " follows RFC 6020 and 7950 rules."),
+                                      " follows RFC 6020, 7950, and XXXX rules."),
             optparse.make_option("-P", "--check-update-from-path",
                                  dest="old_path",
                                  default=[],
@@ -85,7 +86,8 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             + " (RFC 7950: sec. 11, p2)")
         error.add_error_code(
             'CHK_DEF_REMOVED', 3,
-            "the %s '%s', defined at %s is illegally removed")
+            "the %s '%s', defined at %s is illegally removed"
+            + " or marked obsolete")
         error.add_error_code(
             'CHK_DEF_ADDED', 3,
             "the %s '%s' is illegally added")
@@ -170,6 +172,8 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             return
 
         check_update(ctx, modules[0])
+        if len(ctx.errors) > 0:
+            print("FOUND ERRORS")
 
 def check_update(ctx, newmod):
     oldpath = os.pathsep.join(ctx.opts.old_path)
@@ -418,8 +422,10 @@ def chk_stmt_definitions(olds, newp, ctx, definitions):
 def chk_stmt(olds, newp, ctx):
     news = newp.search_one(olds.keyword, arg = olds.arg)
     if news is None:
-        err_def_removed(olds, newp, ctx)
-        return None
+        oldstatus = olds.search_one('status')
+        if oldstatus is None or oldstatus.arg != 'obsolete':
+            err_def_removed(olds, newp, ctx)
+            return None
     chk_status(olds, news, ctx)
     chk_if_feature(olds, news, ctx)
     return news
@@ -444,8 +450,10 @@ def chk_children(oldch, newchs, newp, ctx):
             newch = ch
             break
     if newch is None:
-        err_def_removed(oldch, newp, ctx)
-        return
+        oldstatus = oldch.search_one('status')
+        if oldstatus is None or oldstatus.arg != 'obsolete':
+            err_def_removed(oldch, newp, ctx)
+            return
 
     if newch.keyword != oldch.keyword:
         err_add(ctx.errors, newch.pos, 'CHK_CHILD_KEYWORD_CHANGED',
@@ -476,14 +484,23 @@ def chk_children(oldch, newchs, newp, ctx):
 def chk_status(old, new, ctx):
     oldstatus = old.search_one('status')
     newstatus = new.search_one('status')
-    if oldstatus is None or oldstatus.arg == 'current':
-        # any new status is ok
+    if ((oldstatus is None or oldstatus.arg != 'obsolete') and
+        (newstatus and newstatus.arg == 'obsolete')):
+        # changing from any status other than obsolete to
+        # obsolete is a non-backwards-compatible change
+        # per RFCXXXX.
+        err_add(ctx.errors, new.pos, 'CHK_INVALID_STATUS',
+                (newstatus.arg,
+                 oldstatus.arg if oldstatus else "(implicit) current"))
+    elif oldstatus is None or oldstatus.arg == 'current':
+        # any other new status status is ok
         return
     if newstatus is None:
         err_add(ctx.errors, new.pos, 'CHK_INVALID_STATUS',
                 ("(implicit) current", oldstatus.arg))
     elif ((newstatus.arg == 'current') or
-          (oldstatus.arg == 'obsolete' and newstatus.arg != 'obsolete')):
+          (oldstatus and oldstatus.arg == 'obsolete' and
+           newstatus.arg != 'obsolete')):
         err_add(ctx.errors, newstatus.pos, 'CHK_INVALID_STATUS',
                 (newstatus.arg, oldstatus.arg))
 
