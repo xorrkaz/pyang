@@ -1,0 +1,2 @@
+example-mod@2025-02-01.yang:8: error: CHK_MISSING_NBC_EXTENSION
+example-mod@2025-02-01.yang:13: error: CHK_DEF_REMOVED

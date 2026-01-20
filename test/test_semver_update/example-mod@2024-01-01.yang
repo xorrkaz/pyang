@@ -1,0 +1,16 @@
+module example-mod {
+  yang-version 1.1;
+  namespace "urn:example:mod";
+  prefix ex;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.2.3";
+  }
+
+  container top {
+    leaf a { type string; }
+  }
+}

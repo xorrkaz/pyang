@@ -1,0 +1,9 @@
+module ietf-yang-semver {
+  yang-version 1.1;
+  namespace "urn:ietf:params:xml:ns:yang:ietf-yang-semver";
+  prefix ysv;
+
+  extension version {
+    argument "yang-semver";
+  }
+}

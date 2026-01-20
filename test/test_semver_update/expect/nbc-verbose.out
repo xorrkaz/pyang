@@ -1,0 +1,2 @@
+SUGGESTED-NEXT-YANG-SEMVER: 2.0.0
+NBC: check_update reported non-backwards-compatible changes affecting example-mod:/top/a (removed leaf a).
