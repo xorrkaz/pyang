@@ -1,5 +1,5 @@
 PYANG := $(PYANG) --print-error-code --check-update-from
-PYANG_NO_UPDATE := $(firstword $(PYANG))
+PYANG_NO_UPDATE := $(subst --check-update-from,,$(PYANG))
 
 test:
 	@echo "semver-bc... " | tr -d '\012';			\
@@ -78,7 +78,7 @@ test:
 	echo "ok";
 
 	@echo "semver-invalid... " | tr -d '\012';		\
-	$(PYANG_NO_UPDATE) --print-error-code bad-semver.yang	\
+	$(PYANG_NO_UPDATE) bad-semver.yang			\
 		2> invalid.err;					\
 	diff expect/invalid.err invalid.err > invalid.diff || \
 		{ cat invalid.diff; exit 1; };		\
