@@ -85,6 +85,11 @@ test:
 	rm -f invalid.diff;				\
 	echo "ok";
 
+	@echo "semver-prerelease-no-trailing-number... " | tr -d '\012'; \
+	$(PYANG_NO_UPDATE) prerelease-no-trailing-number.yang	\
+		2> /dev/null > /dev/null || exit 1;		\
+	echo "ok";
+
 	@echo "nbc-extension... " | tr -d '\012';		\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		example-mod@2025-02-01.yang 2> nbc-extension.err; \

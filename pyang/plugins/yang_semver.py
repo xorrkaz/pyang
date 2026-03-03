@@ -14,7 +14,7 @@ yang_semver_module_name = 'ietf-yang-semver'
 re_version = re.compile(
     r"^(?P<major>[0-9]+)[.](?P<minor>[0-9]+)[.](?P<patch>[0-9]+)"
     r"(?P<compat>_(non_)?compatible)?"
-    r"(?P<pre_release>-[A-Za-z0-9.-]+[.-][0-9]+)?"
+    r"(?P<pre_release>-[A-Za-z0-9.-]+)?"
     r"(?P<build>[+][A-Za-z0-9.-]+)?$")
 
 class YANGSemverPlugin(plugin.PyangPlugin):
