@@ -205,6 +205,15 @@ test:
 		2> /dev/null > /dev/null || exit 1;		\
 	echo "ok";
 
+	@echo "semver-no-traceback-on-syntax-error... " | tr -d '\012'; \
+	$(PYANG) example-mod@2024-01-01.yang			\
+		--check-update-semver				\
+		example-syntax-error@2025-01-01.yang		\
+		2> syntax-error.err > /dev/null;			\
+	test $$? -ne 0 || exit 1;				\
+	! grep -q "Traceback" syntax-error.err || exit 1;	\
+	echo "ok";
+
 	@echo "nbc-extension... " | tr -d '\012';		\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		example-mod@2025-02-01.yang 2> nbc-extension.err; \

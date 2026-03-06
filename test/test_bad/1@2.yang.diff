@@ -1,0 +1,6 @@
+1,2c1,2
+< 1@2.yang:1: warning: FILENAME_BAD_MODULE_NAME
+< 1@2.yang:1: warning: FILENAME_BAD_REVISION
+---
+> 1@2.yang:1: warning: filename "1@2.yang" suggests invalid module name "1", should match "[_A-Za-z][._\-A-Za-z0-9]*"
+> 1@2.yang:1: warning: filename "1@2.yang" suggests invalid revision "2", should match "YYYY-MM-DD"

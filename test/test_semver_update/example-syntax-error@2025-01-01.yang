@@ -1,0 +1,16 @@
+module example-syntax-error {
+  yang-version 1.1;
+  namespace "urn:example:syntax-error";
+  prefix ese;
+
+  revision 2025-01-01 {
+    description "Malformed module for parser-error regression.";
+  }
+
+  container top {
+    leaf a {
+      status: obsolete;
+      type string;
+    }
+  }
+}

@@ -202,6 +202,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.check_update_from:
             return
+        # If parsing failed, pyang can call post_validate_ctx() with no modules.
+        # In that case, syntax errors are already reported; skip update checks.
+        if not modules:
+            return
 
         info = check_update(ctx, modules[0])
         if info is None:
