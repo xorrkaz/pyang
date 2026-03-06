@@ -1,0 +1,2 @@
+example-semver-possible@2025-02-01.yang:10: warning: CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC
+example-semver-possible@2025-02-01.yang:16: warning: CHK_UNDECIDED_DESCRIPTION

@@ -1,0 +1,19 @@
+module example-semver-possible {
+  yang-version 1.1;
+  namespace "urn:example:semver-possible";
+  prefix esp;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Possible NBC with major bump.";
+    ysv:version "2.0.0";
+  }
+
+  container top {
+    leaf a {
+      type string;
+      description "new description";
+    }
+  }
+}

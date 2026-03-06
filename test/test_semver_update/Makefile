@@ -31,6 +31,54 @@ test:
 	rm -f no-semver-assumed.diff;			\
 	echo "ok";
 
+	@echo "semver-nbc-missing-major-error... " | tr -d '\012';	\
+	$(PYANG) example-semver-nbc@2024-01-01.yang		\
+		--check-update-semver				\
+		example-semver-nbc@2025-01-01.yang		\
+		2> semver-nbc-missing-major.err > semver-nbc-missing-major.out; \
+	diff expect/semver-nbc-missing-major.out semver-nbc-missing-major.out > semver-nbc-missing-major-out.diff || \
+		{ cat semver-nbc-missing-major-out.diff; exit 1; }; \
+	diff expect/semver-nbc-missing-major.err semver-nbc-missing-major.err > semver-nbc-missing-major-err.diff || \
+		{ cat semver-nbc-missing-major-err.diff; exit 1; }; \
+	rm -f semver-nbc-missing-major-out.diff semver-nbc-missing-major-err.diff; \
+	echo "ok";
+
+	@echo "semver-major-without-possible-warning... " | tr -d '\012'; \
+	$(PYANG) example-semver-major@2024-01-01.yang		\
+		--check-update-semver				\
+		example-semver-major@2025-01-01.yang		\
+		2> semver-major-without-possible.err > semver-major-without-possible.out; \
+	diff expect/semver-major-without-possible.out semver-major-without-possible.out > semver-major-without-possible-out.diff || \
+		{ cat semver-major-without-possible-out.diff; exit 1; }; \
+	diff expect/semver-major-without-possible.err semver-major-without-possible.err > semver-major-without-possible-err.diff || \
+		{ cat semver-major-without-possible-err.diff; exit 1; }; \
+	rm -f semver-major-without-possible-out.diff semver-major-without-possible-err.diff; \
+	echo "ok";
+
+	@echo "semver-possible-major-ok... " | tr -d '\012';	\
+	$(PYANG) example-semver-possible@2024-01-01.yang	\
+		--check-update-semver				\
+		example-semver-possible@2025-01-01.yang		\
+		2> semver-possible-major-ok.err > semver-possible-major-ok.out; \
+	diff expect/semver-possible-major-ok.out semver-possible-major-ok.out > semver-possible-major-ok-out.diff || \
+		{ cat semver-possible-major-ok-out.diff; exit 1; }; \
+	diff expect/semver-possible-major-ok.err semver-possible-major-ok.err > semver-possible-major-ok-err.diff || \
+		{ cat semver-possible-major-ok-err.diff; exit 1; }; \
+	rm -f semver-possible-major-ok-out.diff semver-possible-major-ok-err.diff; \
+	echo "ok";
+
+	@echo "semver-possible-minor-overpatch-warning... " | tr -d '\012'; \
+	$(PYANG) example-semver-possible@2024-01-01.yang	\
+		--check-update-semver				\
+		example-semver-possible@2025-02-01.yang		\
+		2> semver-possible-minor-overpatch.err > semver-possible-minor-overpatch.out; \
+	diff expect/semver-possible-minor-overpatch.out semver-possible-minor-overpatch.out > semver-possible-minor-overpatch-out.diff || \
+		{ cat semver-possible-minor-overpatch-out.diff; exit 1; }; \
+	diff expect/semver-possible-minor-overpatch.err semver-possible-minor-overpatch.err > semver-possible-minor-overpatch-err.diff || \
+		{ cat semver-possible-minor-overpatch-err.diff; exit 1; }; \
+	rm -f semver-possible-minor-overpatch-out.diff semver-possible-minor-overpatch-err.diff; \
+	echo "ok";
+
 	@echo "semver-nbc... " | tr -d '\012';			\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		--check-update-semver example-mod@2025-02-01.yang \

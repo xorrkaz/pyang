@@ -189,6 +189,15 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
         error.add_error_code(
             'CHK_MISSING_NBC_EXTENSION', 3,
             "rev:non-backwards-compatible is required for this revision")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_NBC_BUMP', 3,
+            "declared ysv:version %s does not include a required MAJOR/_non_compatible bump for known NBC changes (suggested %s)")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC', 4,
+            "declared ysv:version %s includes a MAJOR/_non_compatible bump but no possible NBC changes were detected (suggested %s)")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC', 4,
+            "declared ysv:version %s includes only a MINOR/_compatible bump where suggestion is PATCH and only possible NBC changes were detected (suggested %s)")
 
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.check_update_from:
@@ -521,6 +530,9 @@ def report_semver(ctx, info, nbc_changes):
     if recommendation is None:
         print("SUGGESTED-NEXT-YANG-SEMVER: unavailable (%s)" % reason)
         return
+    check_declared_semver(ctx, info, old_version, recommendation,
+                          change, nbc_changes)
+    newrev = info['newrev']
     if used_default_old_version:
         print("ASSUMED-OLD-YANG-SEMVER: 1.0.0 (old revision missing ysv:version)")
     print("SUGGESTED-NEXT-YANG-SEMVER: %s" % recommendation)
@@ -550,6 +562,60 @@ def report_semver(ctx, info, nbc_changes):
         else:
             print("POSSIBLE-NBC-CHANGE(S):")
         print("Consult document authors and YANG Doctors.")
+
+def semver_change_class(old_version, new_version):
+    oldp = yang_semver.parse_version(old_version)
+    newp = yang_semver.parse_version(new_version)
+    if oldp is None or newp is None:
+        return None
+    cls = 'none'
+    if newp['major'] > oldp['major']:
+        cls = 'major'
+    elif newp['major'] == oldp['major'] and newp['minor'] > oldp['minor']:
+        cls = 'minor'
+    elif (newp['major'] == oldp['major'] and
+          newp['minor'] == oldp['minor'] and
+          newp['patch'] > oldp['patch']):
+        cls = 'patch'
+    # YANG Semver compatibility tags override numeric interpretation.
+    if newp['compat'] == 'non_compatible':
+        return 'major'
+    if newp['compat'] == 'compatible':
+        if cls in ('none', 'patch'):
+            return 'minor'
+    return cls
+
+def check_declared_semver(ctx, info, old_version, recommendation,
+                          change, nbc_changes):
+    newrev = info['newrev']
+    if newrev is None:
+        return
+    new_version_stmt = newrev.search_one((ysvmod, 'version'))
+    if new_version_stmt is None:
+        return
+    declared = new_version_stmt.arg
+    if declared == recommendation:
+        return
+    declared_class = semver_change_class(old_version, declared)
+    suggested_class = semver_change_class(old_version, recommendation)
+    if declared_class is None or suggested_class is None:
+        return
+    possible_nbc_changes = has_possible_nbc_changes(info['errors'])
+    if nbc_changes:
+        if declared_class != 'major':
+            err_add(ctx.errors, new_version_stmt.pos, 'CHK_BAD_SEMVER_NBC_BUMP',
+                    (declared, recommendation))
+        return
+    if declared_class == 'major' and not possible_nbc_changes:
+        err_add(ctx.errors, new_version_stmt.pos,
+                'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC',
+                (declared, recommendation))
+        return
+    if (possible_nbc_changes and declared_class == 'minor' and
+            suggested_class == 'patch'):
+        err_add(ctx.errors, new_version_stmt.pos,
+                'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC',
+                (declared, recommendation))
 
 def chk_feature(olds, newmod, ctx):
     chk_stmt_definitions(olds, newmod, ctx, newmod.i_features)
