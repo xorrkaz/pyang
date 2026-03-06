@@ -1,0 +1,22 @@
+module example-enum {
+  yang-version 1.1;
+  namespace "urn:example:enum";
+  prefix ee;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-03-01 {
+    description "Change enum description.";
+    ysv:version "1.0.1";
+  }
+
+  typedef enum-type {
+    type enumeration {
+      enum a {
+        description "enum a description changed";
+      }
+      enum b;
+    }
+    description "Enumeration typedef.";
+  }
+}

@@ -1,0 +1,19 @@
+module example-status {
+  yang-version 1.1;
+  namespace "urn:example:status";
+  prefix es;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Mark leaf a obsolete.";
+    ysv:version "2.0.0";
+  }
+
+  container top {
+    leaf a {
+      status obsolete;
+      type string;
+    }
+  }
+}

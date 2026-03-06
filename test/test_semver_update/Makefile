@@ -21,6 +21,16 @@ test:
 	rm -f editorial.diff;				\
 	echo "ok";
 
+	@echo "semver-missing-old-ysv-assume-1.0.0... " | tr -d '\012'; \
+	$(PYANG) example-no-semver@2024-01-01.yang		\
+		--check-update-semver				\
+		example-no-semver@2025-01-01.yang		\
+		2> /dev/null > no-semver-assumed.out;		\
+	diff expect/no-semver-assumed.out no-semver-assumed.out > no-semver-assumed.diff || \
+		{ cat no-semver-assumed.diff; exit 1; };	\
+	rm -f no-semver-assumed.diff;			\
+	echo "ok";
+
 	@echo "semver-nbc... " | tr -d '\012';			\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		--check-update-semver example-mod@2025-02-01.yang \
@@ -28,6 +38,16 @@ test:
 	diff expect/nbc.out nbc.out > nbc.diff || 		\
 		{ cat nbc.diff; exit 1; };			\
 	rm -f nbc.diff;					\
+	echo "ok";
+
+	@echo "semver-status-obsolete-nbc... " | tr -d '\012';	\
+	$(PYANG) example-status@2024-01-01.yang		\
+		--check-update-semver				\
+		example-status@2025-01-01.yang			\
+		2> /dev/null > status-obsolete-nbc.out;		\
+	diff expect/status-obsolete-nbc.out status-obsolete-nbc.out > status-obsolete-nbc.diff || \
+		{ cat status-obsolete-nbc.diff; exit 1; };	\
+	rm -f status-obsolete-nbc.diff;			\
 	echo "ok";
 
 	@echo "semver-nbc-verbose... " | tr -d '\012';		\
@@ -75,6 +95,53 @@ test:
 	diff expect/possible-nbc-description.out possible-nbc-description.out > possible-nbc-description.diff || \
 		{ cat possible-nbc-description.diff; exit 1; }; \
 	rm -f possible-nbc-description.diff;		\
+	echo "ok";
+
+	@echo "semver-enum-bc... " | tr -d '\012';		\
+	$(PYANG) example-enum@2024-01-01.yang			\
+		--check-update-semver example-enum@2025-01-01.yang \
+		2> /dev/null > enum-bc.out;			\
+	diff expect/enum-bc.out enum-bc.out > enum-bc.diff || 	\
+		{ cat enum-bc.diff; exit 1; };			\
+	rm -f enum-bc.diff;					\
+	echo "ok";
+
+	@echo "semver-enum-nbc-status-obsolete... " | tr -d '\012';	\
+	$(PYANG) example-enum@2024-01-01.yang			\
+		--check-update-semver example-enum@2025-02-01.yang \
+		2> /dev/null > enum-nbc.out;			\
+	diff expect/enum-nbc.out enum-nbc.out > enum-nbc.diff || 	\
+		{ cat enum-nbc.diff; exit 1; };			\
+	rm -f enum-nbc.diff;					\
+	echo "ok";
+
+	@echo "semver-enum-possible-nbc-description... " | tr -d '\012'; \
+	$(PYANG) example-enum@2024-01-01.yang			\
+		--check-update-semver example-enum@2025-03-01.yang \
+		2> /dev/null > enum-possible-nbc.out;		\
+	diff expect/enum-possible-nbc.out enum-possible-nbc.out > enum-possible-nbc.diff || \
+		{ cat enum-possible-nbc.diff; exit 1; };	\
+	rm -f enum-possible-nbc.diff;				\
+	echo "ok";
+
+	@echo "semver-identity-bc... " | tr -d '\012';		\
+	$(PYANG) example-identity@2024-01-01.yang		\
+		--check-update-semver				\
+		example-identity@2025-01-01.yang		\
+		2> /dev/null > identity-bc.out;			\
+	diff expect/identity-bc.out identity-bc.out > identity-bc.diff || \
+		{ cat identity-bc.diff; exit 1; };		\
+	rm -f identity-bc.diff;				\
+	echo "ok";
+
+	@echo "semver-identity-possible-nbc-description... " | tr -d '\012'; \
+	$(PYANG) example-identity@2024-01-01.yang		\
+		--check-update-semver				\
+		example-identity@2025-02-01.yang		\
+		2> /dev/null > identity-possible-nbc.out;	\
+	diff expect/identity-possible-nbc.out identity-possible-nbc.out > identity-possible-nbc.diff || \
+		{ cat identity-possible-nbc.diff; exit 1; };	\
+	rm -f identity-possible-nbc.diff;			\
 	echo "ok";
 
 	@echo "semver-invalid... " | tr -d '\012';		\

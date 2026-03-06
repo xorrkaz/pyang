@@ -1,0 +1,18 @@
+module example-identity {
+  yang-version 1.1;
+  namespace "urn:example:identity";
+  prefix ei;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Add child identity.";
+    ysv:version "1.1.0";
+  }
+
+  identity base-id;
+
+  identity child-id {
+    base base-id;
+  }
+}

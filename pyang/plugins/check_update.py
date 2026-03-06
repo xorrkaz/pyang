@@ -257,6 +257,7 @@ def check_update(ctx, newmod):
         print("")
 
     before_len = len(ctx.errors)
+    ctx.non_schema_bc_changes = False
     chk_module(ctx, oldmod, newmod)
     return {
         'oldctx': oldctx,
@@ -266,6 +267,7 @@ def check_update(ctx, newmod):
         'oldrev': get_latest_revision_stmt(oldmod),
         'newrev': get_latest_revision_stmt(newmod),
         'errors': ctx.errors[before_len:],
+        'non_schema_bc_changes': ctx.non_schema_bc_changes,
     }
 
 
@@ -282,6 +284,7 @@ def chk_module(ctx, oldmod, newmod):
 
     for olds in oldmod.search('identity'):
         chk_identity(olds, newmod, ctx)
+    chk_identity_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('typedef'):
         chk_typedef(olds, newmod, ctx)
@@ -482,6 +485,9 @@ def has_schema_changes(info):
     new_tree = get_tree_output(info['newctx'], info['newmod'])
     return old_tree != new_tree
 
+def has_non_schema_bc_changes(info):
+    return info.get('non_schema_bc_changes', False)
+
 def check_nbc_extension(ctx, info, nbc_changes):
     if not nbc_changes:
         return
@@ -493,18 +499,19 @@ def check_nbc_extension(ctx, info, nbc_changes):
 
 def report_semver(ctx, info, nbc_changes):
     old_version = None
+    used_default_old_version = False
     oldrev = info['oldrev']
     if oldrev is not None:
         version = oldrev.search_one((ysvmod, 'version'))
         if version is not None:
             old_version = version.arg
     if old_version is None:
-        print("SUGGESTED-NEXT-YANG-SEMVER: unavailable (missing ysv:version)")
-        return
+        old_version = "1.0.0"
+        used_default_old_version = True
 
     if nbc_changes:
         change = 'nbc'
-    elif has_schema_changes(info):
+    elif has_schema_changes(info) or has_non_schema_bc_changes(info):
         change = 'bc'
     else:
         change = 'editorial'
@@ -514,6 +521,8 @@ def report_semver(ctx, info, nbc_changes):
     if recommendation is None:
         print("SUGGESTED-NEXT-YANG-SEMVER: unavailable (%s)" % reason)
         return
+    if used_default_old_version:
+        print("ASSUMED-OLD-YANG-SEMVER: 1.0.0 (old revision missing ysv:version)")
     print("SUGGESTED-NEXT-YANG-SEMVER: %s" % recommendation)
     if nbc_changes:
         if ctx.opts.check_update_nbc_verbose:
@@ -549,6 +558,7 @@ def chk_identity(olds, newmod, ctx):
     news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_identities)
     if news is None:
         return
+    chk_description(olds, news, ctx)
     # make sure the base isn't changed (other than syntactically)
     oldbases = olds.search('base')
     newbases = news.search('base')
@@ -576,6 +586,15 @@ def chk_identity(olds, newmod, ctx):
                newbase.i_identity.i_module.i_modulename)
               or (oldbase.i_identity.arg != newbase.i_identity.arg)):
             err_def_changed(oldbase, newbase, ctx)
+
+def mark_non_schema_bc_change(ctx):
+    ctx.non_schema_bc_changes = True
+
+def chk_identity_additions(oldmod, newmod, ctx):
+    old_ids = set([s.arg for s in oldmod.search('identity')])
+    for news in newmod.search('identity'):
+        if news.arg not in old_ids:
+            mark_non_schema_bc_change(ctx)
 
 def chk_typedef(olds, newmod, ctx):
     news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_typedefs)
@@ -736,7 +755,7 @@ def chk_status(old, new, ctx):
         (newstatus and newstatus.arg == 'obsolete')):
         # changing from any status other than obsolete to
         # obsolete is a non-backwards-compatible change
-        # per RFCXXXX.
+        # per draft-ietf-netmod-yang-module-versioning.
         err_add(ctx.errors, new.pos, 'CHK_INVALID_STATUS',
                 (newstatus.arg,
                  oldstatus.arg if oldstatus else "(implicit) current"))
@@ -1049,14 +1068,25 @@ def chk_description(old, new, ctx):
 def chk_enumeration(old, new, oldts, newts, ctx):
     # verify that all old enums are still in new, with the same values
     for name, val in oldts.enums:
+        old_enum_stmt = old.search_one('enum', arg=name)
+        new_enum_stmt = new.search_one('enum', arg=name)
         n = util.keysearch(name, 0, newts.enums)
         if n is None:
+            pos = old_enum_stmt.pos if old_enum_stmt is not None else old.pos
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
-                    ('enum', name, old.pos))
+                    ('enum', name, pos))
         elif n[1] != val:
             errcode = verrcode('CHK_ENUM_VALUE_CHANGED', new)
             err_add(ctx.errors, new.pos, errcode,
                     (name, val, n[1]))
+        elif old_enum_stmt is not None and new_enum_stmt is not None:
+            chk_status(old_enum_stmt, new_enum_stmt, ctx)
+            chk_description(old_enum_stmt, new_enum_stmt, ctx)
+    # newly added enum names are BC non-schema changes and should
+    # influence Semver recommendation.
+    for name, val in newts.enums:
+        if util.keysearch(name, 0, oldts.enums) is None:
+            mark_non_schema_bc_change(ctx)
 
 def chk_bits(old, new, oldts, newts, ctx):
     # verify that all old bits are still in new, with the same positions
