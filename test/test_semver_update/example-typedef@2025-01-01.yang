@@ -1,0 +1,20 @@
+module example-typedef {
+  yang-version 1.1;
+  namespace "urn:example:typedef";
+  prefix et;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Add typedef.";
+    ysv:version "1.1.0";
+  }
+
+  typedef base-string {
+    type string;
+  }
+
+  typedef user-name {
+    type string;
+  }
+}

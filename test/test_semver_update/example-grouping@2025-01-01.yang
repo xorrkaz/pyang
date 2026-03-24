@@ -1,0 +1,25 @@
+module example-grouping {
+  yang-version 1.1;
+  namespace "urn:example:grouping";
+  prefix eg;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Add grouping.";
+    ysv:version "1.1.0";
+  }
+
+  grouping person {
+    description "Person details.";
+    leaf name {
+      type string;
+    }
+  }
+
+  grouping address {
+    leaf street {
+      type string;
+    }
+  }
+}

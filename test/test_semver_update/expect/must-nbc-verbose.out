@@ -1,0 +1,3 @@
+SUGGESTED-NEXT-YANG-SEMVER: 2.0.0
+POSSIBLE-NBC-CHANGE(S): check_update reported warnings that may indicate non-backwards-compatible changes. Affected nodes: example-must:/top/b (must changed).
+Consult document authors and YANG Doctors.

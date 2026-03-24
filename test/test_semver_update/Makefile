@@ -127,6 +127,18 @@ test:
 	rm -f possible-nbc-verbose.diff;			\
 	echo "ok";
 
+	@echo "semver-must-nbc-verbose... " | tr -d '\012';	\
+	$(PYANG) example-must@2024-01-01.yang			\
+		--check-update-nbc-verbose --check-update-semver \
+		example-must@2025-01-01.yang			\
+		2> must-nbc-verbose.err > must-nbc-verbose.out;	\
+	diff expect/must-nbc-verbose.out must-nbc-verbose.out > must-nbc-verbose.diff || \
+		{ cat must-nbc-verbose.diff; exit 1; };		\
+	diff expect/must-nbc-verbose.err must-nbc-verbose.err > must-nbc-verbose-err.diff || \
+		{ cat must-nbc-verbose-err.diff; exit 1; };	\
+	rm -f must-nbc-verbose.diff must-nbc-verbose-err.diff;	\
+	echo "ok";
+
 	@echo "semver-possible-nbc-pattern... " | tr -d '\012';	\
 	$(PYANG) example-pattern@2024-01-01.yang		\
 		--check-update-semver example-pattern@2025-01-01.yang \
@@ -143,6 +155,18 @@ test:
 	diff expect/possible-nbc-description.out possible-nbc-description.out > possible-nbc-description.diff || \
 		{ cat possible-nbc-description.diff; exit 1; }; \
 	rm -f possible-nbc-description.diff;		\
+	echo "ok";
+
+	@echo "semver-possible-nbc-presence... " | tr -d '\012';	\
+	$(PYANG) example-presence@2024-01-01.yang		\
+		--check-update-semver				\
+		example-presence@2025-01-01.yang		\
+		2> possible-nbc-presence.err > possible-nbc-presence.out; \
+	diff expect/possible-nbc-presence.out possible-nbc-presence.out > possible-nbc-presence-out.diff || \
+		{ cat possible-nbc-presence-out.diff; exit 1; }; \
+	diff expect/possible-nbc-presence.err possible-nbc-presence.err > possible-nbc-presence-err.diff || \
+		{ cat possible-nbc-presence-err.diff; exit 1; }; \
+	rm -f possible-nbc-presence-out.diff possible-nbc-presence-err.diff; \
 	echo "ok";
 
 	@echo "semver-enum-bc... " | tr -d '\012';		\
@@ -190,6 +214,36 @@ test:
 	diff expect/identity-possible-nbc.out identity-possible-nbc.out > identity-possible-nbc.diff || \
 		{ cat identity-possible-nbc.diff; exit 1; };	\
 	rm -f identity-possible-nbc.diff;			\
+	echo "ok";
+
+	@echo "semver-typedef-bc... " | tr -d '\012';		\
+	$(PYANG) example-typedef@2024-01-01.yang		\
+		--check-update-semver				\
+		example-typedef@2025-01-01.yang		\
+		2> /dev/null > typedef-bc.out;			\
+	diff expect/typedef-bc.out typedef-bc.out > typedef-bc.diff || \
+		{ cat typedef-bc.diff; exit 1; };		\
+	rm -f typedef-bc.diff;				\
+	echo "ok";
+
+	@echo "semver-grouping-bc... " | tr -d '\012';		\
+	$(PYANG) example-grouping@2024-01-01.yang		\
+		--check-update-semver				\
+		example-grouping@2025-01-01.yang		\
+		2> /dev/null > grouping-bc.out;			\
+	diff expect/grouping-bc.out grouping-bc.out > grouping-bc.diff || \
+		{ cat grouping-bc.diff; exit 1; };		\
+	rm -f grouping-bc.diff;				\
+	echo "ok";
+
+	@echo "semver-grouping-possible-nbc-description... " | tr -d '\012'; \
+	$(PYANG) example-grouping@2024-01-01.yang		\
+		--check-update-semver				\
+		example-grouping@2025-02-01.yang		\
+		2> /dev/null > grouping-possible-nbc.out;	\
+	diff expect/grouping-possible-nbc.out grouping-possible-nbc.out > grouping-possible-nbc.diff || \
+		{ cat grouping-possible-nbc.diff; exit 1; };	\
+	rm -f grouping-possible-nbc.diff;			\
 	echo "ok";
 
 	@echo "semver-invalid... " | tr -d '\012';		\

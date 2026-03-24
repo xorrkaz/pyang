@@ -131,19 +131,19 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "a new must expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_MUST', 4,
-            "this must expression may be more constrained than before")
+            "this must expression may be more constrained than before; expert review is recommended")
         error.add_error_code(
             'CHK_NEW_WHEN', 3,
             "a new when expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_WHEN', 4,
-            "this when expression may be different than before")
+            "this when expression may be different than before; expert review is recommended")
         error.add_error_code(
             'CHK_UNDECIDED_PRESENCE', 4,
             "this presence expression may be different than before")
         error.add_error_code(
             'CHK_UNDECIDED_PATTERN', 4,
-            "this pattern restriction may be more constrained than before")
+            "this pattern restriction may be more constrained than before; expert review is recommended")
         error.add_error_code(
             'CHK_UNDECIDED_DESCRIPTION', 4,
             "the description change may have changed the semantics of the node")
@@ -301,9 +301,11 @@ def chk_module(ctx, oldmod, newmod):
 
     for olds in oldmod.search('typedef'):
         chk_typedef(olds, newmod, ctx)
+    chk_typedef_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('grouping'):
         chk_grouping(olds, newmod, ctx)
+    chk_grouping_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('rpc'):
         chk_rpc(olds, newmod, ctx)
@@ -375,6 +377,14 @@ def has_nbc_changes(errors):
 def has_possible_nbc_changes(errors):
     for epos, etag, eargs in errors:
         if error.is_warning(error.err_level(etag)):
+            return True
+    return False
+
+def has_major_possible_nbc_changes(errors):
+    for epos, etag, eargs in errors:
+        if etag in ('CHK_UNDECIDED_MUST',
+                    'CHK_UNDECIDED_WHEN',
+                    'CHK_UNDECIDED_PATTERN'):
             return True
     return False
 
@@ -522,7 +532,7 @@ def report_semver(ctx, info, nbc_changes):
         old_version = "1.0.0"
         used_default_old_version = True
 
-    if nbc_changes:
+    if nbc_changes or has_major_possible_nbc_changes(info['errors']):
         change = 'nbc'
     elif has_schema_changes(info) or has_non_schema_bc_changes(info):
         change = 'bc'
@@ -673,11 +683,24 @@ def chk_typedef(olds, newmod, ctx):
     chk_description(olds, news, ctx)
     chk_type(olds.search_one('type'), news.search_one('type'), ctx)
 
+def chk_typedef_additions(oldmod, newmod, ctx):
+    old_typedefs = set([s.arg for s in oldmod.search('typedef')])
+    for news in newmod.search('typedef'):
+        if news.arg not in old_typedefs:
+            mark_non_schema_bc_change(ctx)
+
 def chk_grouping(olds, newmod, ctx):
     news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_groupings)
     if news is None:
         return
+    chk_description(olds, news, ctx)
     chk_i_children(olds, news, ctx)
+
+def chk_grouping_additions(oldmod, newmod, ctx):
+    old_groupings = set([s.arg for s in oldmod.search('grouping')])
+    for news in newmod.search('grouping'):
+        if news.arg not in old_groupings:
+            mark_non_schema_bc_change(ctx)
 
 def chk_rpc(olds, newmod, ctx):
     news = chk_stmt(olds, newmod, ctx)
