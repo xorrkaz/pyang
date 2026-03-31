@@ -1,0 +1,21 @@
+module example-enum {
+  yang-version 1.1;
+  namespace "urn:example:enum";
+  prefix ee;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-04-01 {
+    description "Remove obsolete enum a.";
+    ysv:version "2.1.0";
+  }
+
+  typedef enum-type {
+    type enumeration {
+      enum b {
+        value 1;
+      }
+    }
+    description "Enumeration typedef.";
+  }
+}

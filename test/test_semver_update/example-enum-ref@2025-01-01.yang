@@ -1,0 +1,21 @@
+module example-enum-ref {
+  yang-version 1.1;
+  namespace "urn:example:enum-ref";
+  prefix eer;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Change enum reference.";
+    ysv:version "1.0.1";
+  }
+
+  typedef enum-type {
+    type enumeration {
+      enum a {
+        reference "RFC 2222";
+      }
+      enum b;
+    }
+  }
+}

@@ -148,6 +148,9 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_UNDECIDED_DESCRIPTION', 4,
             "the description change may have changed the semantics of the node")
         error.add_error_code(
+            'CHK_UNDECIDED_REFERENCE', 4,
+            "the reference change may have changed the semantics of the node")
+        error.add_error_code(
             'CHK_IMPLICIT_DEFAULT', 3,
             "the leaf had an implicit default")
         error.add_error_code(
@@ -406,7 +409,8 @@ def suppress_possible_nbc_warnings(ctx, info):
 def stmt_to_node_desc(stmt):
     if stmt is None:
         return None
-    if stmt.keyword in ('when', 'must', 'presence', 'pattern', 'description'):
+    if stmt.keyword in ('when', 'must', 'presence', 'pattern', 'description',
+                        'reference'):
         stmt = stmt.parent
     if stmt is not None and stmt.keyword == 'type' and stmt.parent is not None:
         stmt = stmt.parent
@@ -465,6 +469,8 @@ def reason_for_error(etag, eargs):
         return "pattern changed"
     if etag == 'CHK_UNDECIDED_DESCRIPTION':
         return "the description change may have changed the semantics of the node"
+    if etag == 'CHK_UNDECIDED_REFERENCE':
+        return "the reference change may have changed the semantics of the node"
     return etag
 
 def collect_nodes(errors, want_level, modules_by_ref):
@@ -635,9 +641,17 @@ def chk_feature(olds, newmod, ctx):
     chk_stmt_definitions(olds, newmod, ctx, newmod.i_features)
 
 def chk_identity(olds, newmod, ctx):
-    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_identities)
+    news = None
+    if olds.arg in newmod.i_identities:
+        news = newmod.i_identities[olds.arg]
     if news is None:
+        if is_stmt_obsolete(olds):
+            mark_non_schema_bc_change(ctx)
+            return
+        err_def_removed(olds, newmod, ctx)
         return
+    chk_status(olds, news, ctx)
+    chk_if_feature(olds, news, ctx)
     chk_description(olds, news, ctx)
     # make sure the base isn't changed (other than syntactically)
     oldbases = olds.search('base')
@@ -669,6 +683,12 @@ def chk_identity(olds, newmod, ctx):
 
 def mark_non_schema_bc_change(ctx):
     ctx.non_schema_bc_changes = True
+
+def is_stmt_obsolete(stmt):
+    if stmt is None:
+        return False
+    status = stmt.search_one('status')
+    return status is not None and status.arg == 'obsolete'
 
 def chk_identity_additions(oldmod, newmod, ctx):
     old_ids = set([s.arg for s in oldmod.search('identity')])
@@ -776,6 +796,7 @@ def chk_stmt_definitions(olds, newp, ctx, definitions):
         return None
     chk_status(olds, news, ctx)
     chk_if_feature(olds, news, ctx)
+    chk_reference(olds, news, ctx)
     return news
 
 def chk_stmt(olds, newp, ctx):
@@ -821,6 +842,7 @@ def chk_children(oldch, newchs, newp, ctx):
     chk_status(oldch, newch, ctx)
     chk_if_feature(oldch, newch, ctx)
     chk_description(oldch, newch, ctx)
+    chk_reference(oldch, newch, ctx)
     chk_config(oldch, newch, ctx)
     chk_must(oldch, newch, ctx)
     chk_when(oldch, newch, ctx)
@@ -1158,6 +1180,18 @@ def chk_description(old, new, ctx):
     if old_desc.arg != new_desc.arg:
         err_add(ctx.errors, new_desc.pos, 'CHK_UNDECIDED_DESCRIPTION', ())
 
+def chk_reference(old, new, ctx):
+    old_ref = old.search_one('reference')
+    new_ref = new.search_one('reference')
+    if old_ref is None and new_ref is None:
+        return
+    if old_ref is None or new_ref is None:
+        pos = new_ref.pos if new_ref is not None else new.pos
+        err_add(ctx.errors, pos, 'CHK_UNDECIDED_REFERENCE', ())
+        return
+    if old_ref.arg != new_ref.arg:
+        err_add(ctx.errors, new_ref.pos, 'CHK_UNDECIDED_REFERENCE', ())
+
 def chk_enumeration(old, new, oldts, newts, ctx):
     # verify that all old enums are still in new, with the same values
     for name, val in oldts.enums:
@@ -1165,6 +1199,9 @@ def chk_enumeration(old, new, oldts, newts, ctx):
         new_enum_stmt = new.search_one('enum', arg=name)
         n = util.keysearch(name, 0, newts.enums)
         if n is None:
+            if is_stmt_obsolete(old_enum_stmt):
+                mark_non_schema_bc_change(ctx)
+                continue
             pos = old_enum_stmt.pos if old_enum_stmt is not None else old.pos
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
                     ('enum', name, pos))
@@ -1175,6 +1212,7 @@ def chk_enumeration(old, new, oldts, newts, ctx):
         elif old_enum_stmt is not None and new_enum_stmt is not None:
             chk_status(old_enum_stmt, new_enum_stmt, ctx)
             chk_description(old_enum_stmt, new_enum_stmt, ctx)
+            chk_reference(old_enum_stmt, new_enum_stmt, ctx)
     # newly added enum names are BC non-schema changes and should
     # influence Semver recommendation.
     for name, val in newts.enums:

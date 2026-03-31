@@ -157,6 +157,15 @@ test:
 	rm -f possible-nbc-description.diff;		\
 	echo "ok";
 
+	@echo "semver-possible-nbc-reference... " | tr -d '\012'; \
+	$(PYANG) example-ref@2024-01-01.yang		\
+		--check-update-semver example-ref@2025-01-01.yang \
+		2> /dev/null > possible-nbc-reference.out;	\
+	diff expect/possible-nbc-reference.out possible-nbc-reference.out > possible-nbc-reference.diff || \
+		{ cat possible-nbc-reference.diff; exit 1; }; \
+	rm -f possible-nbc-reference.diff;		\
+	echo "ok";
+
 	@echo "semver-possible-nbc-presence... " | tr -d '\012';	\
 	$(PYANG) example-presence@2024-01-01.yang		\
 		--check-update-semver				\
@@ -196,6 +205,24 @@ test:
 	rm -f enum-possible-nbc.diff;				\
 	echo "ok";
 
+	@echo "semver-enum-possible-nbc-reference... " | tr -d '\012'; \
+	$(PYANG) example-enum-ref@2024-01-01.yang		\
+		--check-update-semver example-enum-ref@2025-01-01.yang \
+		2> /dev/null > enum-possible-nbc-reference.out;	\
+	diff expect/enum-possible-nbc-reference.out enum-possible-nbc-reference.out > enum-possible-nbc-reference.diff || \
+		{ cat enum-possible-nbc-reference.diff; exit 1; };	\
+	rm -f enum-possible-nbc-reference.diff;			\
+	echo "ok";
+
+	@echo "semver-enum-obsolete-removal-bc... " | tr -d '\012';	\
+	$(PYANG) example-enum@2025-02-01.yang			\
+		--check-update-semver example-enum@2025-04-01.yang \
+		2> /dev/null > enum-obsolete-removal-bc.out;	\
+	diff expect/enum-obsolete-removal-bc.out enum-obsolete-removal-bc.out > enum-obsolete-removal-bc.diff || \
+		{ cat enum-obsolete-removal-bc.diff; exit 1; };	\
+	rm -f enum-obsolete-removal-bc.diff;			\
+	echo "ok";
+
 	@echo "semver-identity-bc... " | tr -d '\012';		\
 	$(PYANG) example-identity@2024-01-01.yang		\
 		--check-update-semver				\
@@ -214,6 +241,16 @@ test:
 	diff expect/identity-possible-nbc.out identity-possible-nbc.out > identity-possible-nbc.diff || \
 		{ cat identity-possible-nbc.diff; exit 1; };	\
 	rm -f identity-possible-nbc.diff;			\
+	echo "ok";
+
+	@echo "semver-identity-obsolete-removal-bc... " | tr -d '\012'; \
+	$(PYANG) example-identity@2025-03-01.yang		\
+		--check-update-semver				\
+		example-identity@2025-04-01.yang		\
+		2> /dev/null > identity-obsolete-removal-bc.out;	\
+	diff expect/identity-obsolete-removal-bc.out identity-obsolete-removal-bc.out > identity-obsolete-removal-bc.diff || \
+		{ cat identity-obsolete-removal-bc.diff; exit 1; };	\
+	rm -f identity-obsolete-removal-bc.diff;			\
 	echo "ok";
 
 	@echo "semver-typedef-bc... " | tr -d '\012';		\
