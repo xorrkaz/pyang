@@ -1,0 +1,54 @@
+module example-bc-constraints {
+  yang-version 1.1;
+  namespace "urn:example:bc-constraints";
+  prefix ebc;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Relax constraints and add metadata.";
+    ysv:version "1.3.0";
+  }
+
+  typedef measured-type {
+    type uint16;
+    units "seconds";
+  }
+
+  typedef defaulted-type {
+    type string;
+    default "typedef-default";
+  }
+
+  leaf-list items {
+    type string {
+      length "1..12 | 20..30";
+    }
+    min-elements 1;
+    max-elements 8;
+  }
+
+  leaf ranged {
+    type uint16 {
+      range "5..25";
+    }
+  }
+
+  leaf units-leaf {
+    type uint16;
+    units "milliseconds";
+  }
+
+  leaf default-leaf {
+    type string;
+    default "enabled";
+  }
+
+  leaf typedef-units-leaf {
+    type measured-type;
+  }
+
+  leaf typedef-default-leaf {
+    type defaulted-type;
+  }
+}

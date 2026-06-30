@@ -2,11 +2,10 @@
   "ietf-sid-file:sid-file": {
     "module-name": "ietf-system",
     "module-revision": "2014-08-06",
-    "description": "pyang description",
     "dependency-revision": [
       {
-        "module-name": "iana-crypt-hash",
-        "module-revision": "2014-08-06"
+        "module-name": "ietf-yang-types",
+        "module-revision": "2013-07-15"
       },
       {
         "module-name": "ietf-inet-types",
@@ -17,8 +16,8 @@
         "module-revision": "2018-02-14"
       },
       {
-        "module-name": "ietf-yang-types",
-        "module-revision": "2013-07-15"
+        "module-name": "iana-crypt-hash",
+        "module-revision": "2014-08-06"
       }
     ],
     "assignment-range": [

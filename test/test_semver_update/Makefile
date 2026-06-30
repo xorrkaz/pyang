@@ -11,6 +11,26 @@ test:
 	rm -f bc.diff;						\
 	echo "ok";
 
+	@echo "semver-bc-constraints... " | tr -d '\012';	\
+	$(PYANG) example-bc-constraints@2024-01-01.yang		\
+		--check-update-semver				\
+		example-bc-constraints@2025-01-01.yang		\
+		2> /dev/null > bc-constraints.out;		\
+	diff expect/bc-constraints.out bc-constraints.out > bc-constraints.diff || \
+		{ cat bc-constraints.diff; exit 1; };		\
+	rm -f bc-constraints.diff;				\
+	echo "ok";
+
+	@echo "semver-bits-bc... " | tr -d '\012';		\
+	$(PYANG) example-bits@2024-01-01.yang			\
+		--check-update-semver				\
+		example-bits@2025-01-01.yang			\
+		2> /dev/null > bits-bc.out;			\
+	diff expect/bits-bc.out bits-bc.out > bits-bc.diff || 	\
+		{ cat bits-bc.diff; exit 1; };			\
+	rm -f bits-bc.diff;					\
+	echo "ok";
+
 	@echo "semver-editorial... " | tr -d '\012';		\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		--check-update-semver				\
@@ -86,6 +106,18 @@ test:
 	diff expect/nbc.out nbc.out > nbc.diff || 		\
 		{ cat nbc.diff; exit 1; };			\
 	rm -f nbc.diff;					\
+	echo "ok";
+
+	@echo "semver-length-nbc... " | tr -d '\012';		\
+	$(PYANG) example-length@2024-01-01.yang		\
+		--check-update-semver				\
+		example-length@2025-01-01.yang			\
+		2> length-nbc.err > length-nbc.out;		\
+	diff expect/length-nbc.out length-nbc.out > length-nbc-out.diff || \
+		{ cat length-nbc-out.diff; exit 1; };		\
+	diff expect/length-nbc.err length-nbc.err > length-nbc-err.diff || \
+		{ cat length-nbc-err.diff; exit 1; };		\
+	rm -f length-nbc-out.diff length-nbc-err.diff;		\
 	echo "ok";
 
 	@echo "semver-status-obsolete-nbc... " | tr -d '\012';	\

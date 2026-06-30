@@ -3,7 +3,6 @@
     "module-name": "toaster",
     "module-revision": "2009-12-28",
     "sid-file-version": 2,
-    "description": "pyang description",
     "assignment-range": [
       {
         "entry-point": "20000",

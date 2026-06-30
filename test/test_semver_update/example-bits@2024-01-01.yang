@@ -1,0 +1,21 @@
+module example-bits {
+  yang-version 1.1;
+  namespace "urn:example:bits";
+  prefix exb;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.2.3";
+  }
+
+  leaf flags {
+    type bits {
+      bit one;
+      bit two {
+        position 4;
+      }
+    }
+  }
+}

@@ -695,6 +695,8 @@ def chk_typedef(olds, newmod, ctx):
     if news is None:
         return
     chk_description(olds, news, ctx)
+    chk_units(olds, news, ctx)
+    chk_default(olds, news, ctx)
     chk_type(olds.search_one('type'), news.search_one('type'), ctx)
 
 def chk_typedef_additions(oldmod, newmod, ctx):
@@ -826,7 +828,7 @@ def chk_children(oldch, newchs, newp, ctx):
         oldstatus = oldch.search_one('status')
         if oldstatus is None or oldstatus.arg != 'obsolete':
             err_def_removed(oldch, newp, ctx)
-            return
+        return
 
     if newch.keyword != oldch.keyword:
         err_add(ctx.errors, newch.pos, 'CHK_CHILD_KEYWORD_CHANGED',
@@ -938,9 +940,11 @@ def chk_when(old, new, ctx):
 
 def chk_units(old, new, ctx):
     oldunits = old.search_one('units')
-    if oldunits is None:
-        return
     newunits = new.search_one('units')
+    if oldunits is None:
+        if newunits is not None:
+            mark_non_schema_bc_change(ctx)
+        return
     if newunits is None:
         err_def_removed(oldunits, new, ctx)
     elif newunits.arg != oldunits.arg:
@@ -961,6 +965,8 @@ def chk_default(old, new, ctx):
             oldtype.i_typedef.i_default is not None and
             oldtype.i_typedef.i_default_str != newdefault.arg):
             err_add(ctx.errors, newdefault.pos, 'CHK_IMPLICIT_DEFAULT', ())
+        else:
+            mark_non_schema_bc_change(ctx)
     elif olddefault.arg != newdefault.arg:
         err_def_changed(olddefault, newdefault, ctx)
 
@@ -974,37 +980,31 @@ def chk_mandatory(old, new, ctx):
             err_def_changed(oldmandatory, newmandatory, ctx)
 
 def chk_min_max(old, new, ctx):
-    # RFC 7950: 'min-elements' defaults to 0 and 'max-elements' defaults to
-    # 'unbounded', so an absent statement is equivalent to that default.  Fold
-    # the defaults into the comparison so that e.g. an added 'max-elements
-    # unbounded' (which equals the default) is not flagged as a restriction.
     oldmin = old.search_one('min-elements')
     newmin = new.search_one('min-elements')
-    if newmin is None:
-        pass
-    elif oldmin is None:
-        if _min_elements_val(newmin.arg) > 0:
+    oldminval = 0 if oldmin is None else int(oldmin.arg)
+    newminval = 0 if newmin is None else int(newmin.arg)
+    if newminval > oldminval:
+        if oldmin is None:
             err_def_added(newmin, ctx)
-    elif _min_elements_val(newmin.arg) > _min_elements_val(oldmin.arg):
-        err_def_changed(oldmin, newmin, ctx)
+        else:
+            err_def_changed(oldmin, newmin, ctx)
+    elif newminval < oldminval:
+        mark_non_schema_bc_change(ctx)
+
     oldmax = old.search_one('max-elements')
     newmax = new.search_one('max-elements')
-    if newmax is None:
-        pass
-    elif oldmax is None:
-        if _max_elements_val(newmax.arg) < float('inf'):
+    oldmaxval = None if oldmax is None else int(oldmax.arg)
+    newmaxval = None if newmax is None else int(newmax.arg)
+    if oldmaxval is None:
+        if newmaxval is not None:
             err_def_added(newmax, ctx)
-    elif _max_elements_val(newmax.arg) < _max_elements_val(oldmax.arg):
+    elif newmaxval is None:
+        mark_non_schema_bc_change(ctx)
+    elif newmaxval < oldmaxval:
         err_def_changed(oldmax, newmax, ctx)
-
-def _min_elements_val(arg):
-    # default for min-elements is 0 (RFC 7950 7.7.5)
-    return int(arg)
-
-def _max_elements_val(arg):
-    # 'unbounded' is a valid value for max-elements (RFC 7950 7.7.4) and
-    # represents no upper bound, i.e. positive infinity.
-    return float('inf') if arg == 'unbounded' else int(arg)
+    elif newmaxval > oldmaxval:
+        mark_non_schema_bc_change(ctx)
 
 def chk_presence(old, new, ctx):
     oldpresence = old.search_one('presence')
@@ -1122,17 +1122,37 @@ def chk_type(old, new, ctx):
 def chk_integer(old, new, oldts, newts, ctx):
     chk_range(old, new, oldts, newts, ctx)
 
+def validate_intervals(type_spec, intervals, pos, module):
+    tmperrors = []
+    for lo, hi in intervals:
+        type_spec.validate(tmperrors, pos, (lo, hi), module, "")
+    return tmperrors
+
+def chk_interval_restriction(old, new, oldspec, newspec, intervals_attr,
+                             keyword, ctx):
+    old_intervals = getattr(oldspec, intervals_attr)
+    new_intervals = getattr(newspec, intervals_attr)
+    tmperrors = validate_intervals(newspec, old_intervals, new.pos,
+                                   new.i_module)
+    if tmperrors:
+        errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
+        err_add(ctx.errors, new.pos, errcode, keyword)
+        return
+    tmperrors = validate_intervals(oldspec, new_intervals, old.pos,
+                                   old.i_module)
+    if tmperrors:
+        mark_non_schema_bc_change(ctx)
+
 def chk_range(old, new, oldts, newts, ctx):
     ots = old.i_type_spec
     nts = new.i_type_spec
     if not isinstance(nts, types.RangeTypeSpec):
+        if isinstance(ots, types.RangeTypeSpec):
+            mark_non_schema_bc_change(ctx)
         return
     if isinstance(ots, types.RangeTypeSpec):
-        tmperrors = []
-        types.validate_ranges(tmperrors, new.pos, ots.ranges, new)
-        if tmperrors:
-            errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
-            err_add(ctx.errors, new.pos, errcode, 'range')
+        chk_interval_restriction(old, new, ots, nts, 'ranges',
+                                 'range', ctx)
     else:
         err_add(ctx.errors, nts.ranges_pos, 'CHK_DEF_ADDED',
                 ('range', str(nts.ranges)))
@@ -1154,9 +1174,28 @@ def get_base_type(ts):
         return get_base_type(ts.base)
 
 def chk_string(old, new, oldts, newts, ctx):
+    chk_length(old, new, oldts, newts, ctx)
     chk_pattern(old, new, ctx)
-    # FIXME: see types.py; we can't check the length
-    return
+
+def get_length_type_spec(type_spec):
+    type_spec = types.get_ancestor_typespec_skip_pattern(type_spec)
+    if isinstance(type_spec, types.LengthTypeSpec):
+        return type_spec
+    return None
+
+def chk_length(old, new, oldts, newts, ctx):
+    ots = get_length_type_spec(old.i_type_spec)
+    nts = get_length_type_spec(new.i_type_spec)
+    if nts is None:
+        if ots is not None:
+            mark_non_schema_bc_change(ctx)
+        return
+    if ots is not None:
+        chk_interval_restriction(old, new, ots, nts, 'lengths',
+                                 'length', ctx)
+    else:
+        err_add(ctx.errors, nts.length_pos, 'CHK_DEF_ADDED',
+                ('length', str(nts.lengths)))
 
 def chk_pattern(old, new, ctx):
     old_patterns = old.search('pattern')
@@ -1224,10 +1263,14 @@ def chk_bits(old, new, oldts, newts, ctx):
             errcode = verrcode('CHK_BIT_POSITION_CHANGED', new)
             err_add(ctx.errors, new.pos, errcode,
                     (name, pos, n[1]))
+    # newly added bit names are BC non-schema changes and should
+    # influence Semver recommendation.
+    for name, pos in newts.bits:
+        if util.keysearch(name, 0, oldts.bits) is None:
+            mark_non_schema_bc_change(ctx)
 
 def chk_binary(old, new, oldts, newts, ctx):
-    # FIXME: see types.py; we can't check the length
-    return
+    chk_length(old, new, oldts, newts, ctx)
 
 def chk_leafref(old, new, oldts, newts, ctx):
     # verify that the path refers to the same leaf
