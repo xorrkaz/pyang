@@ -83,6 +83,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "the module's namespace MUST NOT be changed"
             + " (RFC 7950: sec. 11, p3)")
         error.add_error_code(
+            'CHK_YANG_VERSION_CHANGED', 3,
+            "changing the YANG version from %s to %s is"
+            " non-backwards-compatible")
+        error.add_error_code(
             'CHK_NO_REVISION', 3,
             "a revision statement MUST be present"
             + " (RFC 6020: sec. 10, p2)")
@@ -288,6 +292,8 @@ def chk_module(ctx, oldmod, newmod):
 
     chk_modulename(oldmod, newmod, ctx)
 
+    chk_yang_version(oldmod, newmod, ctx)
+
     chk_namespace(oldmod, newmod, ctx)
 
     chk_revision(oldmod, newmod, ctx)
@@ -327,6 +333,13 @@ def chk_modulename(oldmod, newmod, ctx):
     if oldmod.arg != newmod.arg:
         errcode = verrcode('CHK_INVALID_MODULENAME', newmod)
         err_add(ctx.errors, newmod.pos, errcode, ())
+
+def chk_yang_version(oldmod, newmod, ctx):
+    if oldmod.i_version == '1' and newmod.i_version == '1.1':
+        newversion = newmod.search_one('yang-version')
+        pos = newversion.pos if newversion is not None else newmod.pos
+        err_add(ctx.errors, pos, 'CHK_YANG_VERSION_CHANGED',
+                (oldmod.i_version, newmod.i_version))
 
 def chk_namespace(oldmod, newmod, ctx):
     oldns = oldmod.search_one('namespace')
@@ -453,6 +466,8 @@ def reason_for_error(etag, eargs):
         return "removed %s %s" % (eargs[0], eargs[1])
     if etag == 'CHK_DEF_CHANGED' and len(eargs) > 2:
         return "changed %s %s (was %s)" % (eargs[0], eargs[1], eargs[2])
+    if etag == 'CHK_YANG_VERSION_CHANGED' and len(eargs) > 1:
+        return "changed YANG version from %s to %s" % (eargs[0], eargs[1])
     if etag == 'CHK_CHILD_KEYWORD_CHANGED' and len(eargs) > 2:
         return "changed %s to %s" % (eargs[0], eargs[2])
     if etag == 'CHK_UNDECIDED_WHEN':
