@@ -129,7 +129,8 @@ test:
 		{ cat yang-version-nbc-out.diff; exit 1; };	\
 	diff expect/yang-version-nbc.err yang-version-nbc.err > yang-version-nbc-err.diff || \
 		{ cat yang-version-nbc-err.diff; exit 1; };	\
-	rm -f yang-version-nbc-out.diff yang-version-nbc-err.diff; \
+	rm -f yang-version-nbc.out yang-version-nbc.err		\
+		yang-version-nbc-out.diff yang-version-nbc-err.diff; \
 	echo "ok";
 
 	@echo "semver-status-obsolete-nbc... " | tr -d '\012';	\
