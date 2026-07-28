@@ -31,6 +31,36 @@ test:
 	rm -f bits-bc.diff;					\
 	echo "ok";
 
+	@echo "semver-extension-instance-bc... " | tr -d '\012'; \
+	$(PYANG) example-extension-instance@2024-01-01.yang	\
+		--check-update-semver				\
+		example-extension-instance@2025-01-01.yang	\
+		2> /dev/null > extension-instance-bc.out;	\
+	diff expect/extension-instance-bc.out extension-instance-bc.out > extension-instance-bc.diff || \
+		{ cat extension-instance-bc.diff; exit 1; };	\
+	rm -f extension-instance-bc.diff;			\
+	echo "ok";
+
+	@echo "semver-identity-base-bc... " | tr -d '\012';	\
+	$(PYANG) example-identity-base@2024-01-01.yang		\
+		--check-update-semver				\
+		example-identity-base@2025-01-01.yang		\
+		2> /dev/null > identity-base-bc.out;		\
+	diff expect/identity-base-bc.out identity-base-bc.out > identity-base-bc.diff || \
+		{ cat identity-base-bc.diff; exit 1; };		\
+	rm -f identity-base-bc.diff;				\
+	echo "ok";
+
+	@echo "semver-identityref-base-bc... " | tr -d '\012'; \
+	$(PYANG) example-identityref-base@2024-01-01.yang	\
+		--check-update-semver				\
+		example-identityref-base@2025-01-01.yang	\
+		2> /dev/null > identityref-base-bc.out;		\
+	diff expect/identityref-base-bc.out identityref-base-bc.out > identityref-base-bc.diff || \
+		{ cat identityref-base-bc.diff; exit 1; };	\
+	rm -f identityref-base-bc.diff;			\
+	echo "ok";
+
 	@echo "semver-editorial... " | tr -d '\012';		\
 	$(PYANG) example-mod@2024-01-01.yang			\
 		--check-update-semver				\
@@ -118,6 +148,33 @@ test:
 	diff expect/length-nbc.err length-nbc.err > length-nbc-err.diff || \
 		{ cat length-nbc-err.diff; exit 1; };		\
 	rm -f length-nbc-out.diff length-nbc-err.diff;		\
+	echo "ok";
+
+	@echo "semver-data-order-nbc... " | tr -d '\012';	\
+	$(PYANG) example-data-order@2024-01-01.yang		\
+		--check-update-semver				\
+		example-data-order@2025-01-01.yang		\
+		2> data-order-nbc.err > data-order-nbc.out;	\
+	diff expect/data-order-nbc.out data-order-nbc.out > data-order-nbc-out.diff || \
+		{ cat data-order-nbc-out.diff; exit 1; };	\
+	diff expect/data-order-nbc.err data-order-nbc.err > data-order-nbc-err.diff || \
+		{ cat data-order-nbc-err.diff; exit 1; };	\
+	rm -f data-order-nbc.err data-order-nbc-out.diff	\
+		data-order-nbc-err.diff;				\
+	echo "ok";
+
+	@echo "semver-description-removal-nbc... " | tr -d '\012'; \
+	$(PYANG) example-description-removal@2024-01-01.yang	\
+		--check-update-semver				\
+		example-description-removal@2025-01-01.yang	\
+		2> description-removal-nbc.err > description-removal-nbc.out; \
+	diff expect/description-removal-nbc.out description-removal-nbc.out > description-removal-nbc-out.diff || \
+		{ cat description-removal-nbc-out.diff; exit 1; }; \
+	diff expect/description-removal-nbc.err description-removal-nbc.err > description-removal-nbc-err.diff || \
+		{ cat description-removal-nbc-err.diff; exit 1; }; \
+	rm -f description-removal-nbc.err			\
+		description-removal-nbc-out.diff		\
+		description-removal-nbc-err.diff;		\
 	echo "ok";
 
 	@echo "semver-yang-version-nbc... " | tr -d '\012';	\

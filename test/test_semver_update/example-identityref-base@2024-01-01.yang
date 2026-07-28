@@ -1,0 +1,22 @@
+module example-identityref-base {
+  yang-version 1.1;
+  namespace "urn:example:identityref-base";
+  prefix eirb;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.0.0";
+  }
+
+  identity first;
+  identity second;
+
+  leaf selection {
+    type identityref {
+      base first;
+      base second;
+    }
+  }
+}

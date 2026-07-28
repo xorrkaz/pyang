@@ -1,0 +1,28 @@
+module example-data-order {
+  yang-version 1.1;
+  namespace "urn:example:data-order";
+  prefix edo;
+
+  import ietf-yang-semver { prefix ysv; }
+  import ietf-yang-revisions { prefix rev; }
+
+  revision 2025-01-01 {
+    description "Reorder existing data nodes.";
+    rev:non-backwards-compatible;
+    ysv:version "2.0.0";
+  }
+
+  container top {
+    leaf first {
+      type string;
+    }
+    leaf last {
+      type string;
+    }
+    container middle {
+      leaf value {
+        type string;
+      }
+    }
+  }
+}

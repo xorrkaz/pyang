@@ -122,6 +122,9 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_CHILD_KEYWORD_CHANGED', 3,
             "the %s '%s' is illegally changed to a %s")
         error.add_error_code(
+            'CHK_DATA_NODE_MOVED', 3,
+            "the data node '%s' is illegally moved")
+        error.add_error_code(
             'CHK_MANDATORY_CONFIG', 3,
             "the node %s is changed to config true, but it is mandatory")
         error.add_error_code(
@@ -151,6 +154,9 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
         error.add_error_code(
             'CHK_UNDECIDED_DESCRIPTION', 4,
             "the description change may have changed the semantics of the node")
+        error.add_error_code(
+            'CHK_DESCRIPTION_REMOVED', 3,
+            "the description is illegally removed")
         error.add_error_code(
             'CHK_IMPLICIT_DEFAULT', 3,
             "the leaf had an implicit default")
@@ -321,6 +327,7 @@ def chk_module(ctx, oldmod, newmod):
 
     for olds in oldmod.search('extension'):
         chk_extension(olds, newmod, ctx)
+    chk_extension_instances(oldmod, newmod, ctx)
 
     if ctx.opts.check_update_structures:
         for olds in oldmod.search((sxmod, 'structure')):
@@ -470,6 +477,8 @@ def reason_for_error(etag, eargs):
         return "changed YANG version from %s to %s" % (eargs[0], eargs[1])
     if etag == 'CHK_CHILD_KEYWORD_CHANGED' and len(eargs) > 2:
         return "changed %s to %s" % (eargs[0], eargs[2])
+    if etag == 'CHK_DATA_NODE_MOVED':
+        return "data node moved"
     if etag == 'CHK_UNDECIDED_WHEN':
         return "when changed"
     if etag == 'CHK_UNDECIDED_MUST':
@@ -480,6 +489,8 @@ def reason_for_error(etag, eargs):
         return "pattern changed"
     if etag == 'CHK_UNDECIDED_DESCRIPTION':
         return "the description change may have changed the semantics of the node"
+    if etag == 'CHK_DESCRIPTION_REMOVED':
+        return "description removed"
     return etag
 
 def collect_nodes(errors, want_level, modules_by_ref):
@@ -666,21 +677,19 @@ def chk_identity(olds, newmod, ctx):
     oldbases = olds.search('base')
     newbases = news.search('base')
     if newmod.i_version == '1.1':
-        old_ids = [oldbase.i_identity.arg for oldbase in oldbases]
-        new_ids = [newbase.i_identity.arg for newbase in newbases]
+        old_ids = [(oldbase.i_identity.i_module.i_modulename,
+                    oldbase.i_identity.arg) for oldbase in oldbases]
+        new_ids = [(newbase.i_identity.i_module.i_modulename,
+                    newbase.i_identity.arg) for newbase in newbases]
         for old_id in set(old_ids) - set(new_ids):
             err_def_removed(oldbases[old_ids.index(old_id)], news, ctx)
-        for old_id in set(old_ids) & set(new_ids):
-            oldbase = oldbases[old_ids.index(old_id)]
-            newbase = newbases[new_ids.index(old_id)]
-            if oldbase.i_identity.i_module.i_modulename != \
-               newbase.i_identity.i_module.i_modulename:
-                err_def_changed(oldbase, newbase, ctx)
+        if len(set(new_ids) - set(old_ids)) > 0:
+            mark_non_schema_bc_change(ctx)
     else:
         oldbase = next(iter(oldbases), None)
         newbase = next(iter(newbases), None)
         if oldbase is None and newbase is not None:
-            err_def_added(newbase, ctx)
+            mark_non_schema_bc_change(ctx)
         elif newbase is None and oldbase is not None:
             err_def_removed(oldbase, news, ctx)
         elif oldbase is None and newbase is None:
@@ -772,6 +781,21 @@ def chk_extension(olds, newmod, ctx):
               newyin.arg != oldyin.arg):
             err_def_changed(oldyin, newyin, ctx)
 
+def extension_instance_specs(stmt, path=()):
+    specs = []
+    ignored = ((ysvmod, 'version'),
+               (revmod, 'non-backwards-compatible'))
+    for substmt in stmt.substmts:
+        subpath = path + ((substmt.keyword, substmt.arg),)
+        if isinstance(substmt.keyword, tuple) and \
+           substmt.keyword not in ignored:
+            specs.append(repr(subpath))
+        specs.extend(extension_instance_specs(substmt, subpath))
+    return sorted(specs)
+
+def chk_extension_instances(oldmod, newmod, ctx):
+    if extension_instance_specs(oldmod) != extension_instance_specs(newmod):
+        mark_non_schema_bc_change(ctx)
 
 def chk_augment(oldmod, newmod, ctx):
     # group augment of same target together, and compare with all
@@ -821,6 +845,7 @@ def chk_stmt(olds, newp, ctx):
     return news
 
 def chk_i_children(old, new, ctx):
+    chk_child_order(old, new, ctx)
     for oldch in old.i_children:
         chk_child(oldch, new, ctx)
 
@@ -829,6 +854,26 @@ def chk_i_children(old, new, ctx):
     for newch in added_new_children:
         if statements.is_mandatory_node(newch):
             err_add(ctx.errors, newch.pos, 'CHK_NEW_MANDATORY', newch.arg)
+
+def child_order_key(stmt):
+    module = getattr(stmt.i_module, 'i_modulename', stmt.i_module.arg)
+    return (module, stmt.keyword, stmt.arg)
+
+def chk_child_order(old, new, ctx):
+    old_children = [child for child in old.i_children
+                    if child.keyword in statements.data_definition_keywords]
+    new_children = [child for child in new.i_children
+                    if child.keyword in statements.data_definition_keywords]
+    old_keys = [child_order_key(child) for child in old_children]
+    new_keys = [child_order_key(child) for child in new_children]
+    old_common = [key for key in old_keys if key in new_keys]
+    new_common = [key for key in new_keys if key in old_keys]
+    for old_key, new_key in zip(old_common, new_common):
+        if old_key != new_key:
+            newch = new_children[new_keys.index(new_key)]
+            err_add(ctx.errors, newch.pos, 'CHK_DATA_NODE_MOVED',
+                    (newch.arg,))
+            return
 
 def chk_child(oldch, newp, ctx):
     chk_children(oldch, newp.i_children, newp, ctx)
@@ -1234,9 +1279,11 @@ def chk_description(old, new, ctx):
     new_desc = new.search_one('description')
     if old_desc is None and new_desc is None:
         return
-    if old_desc is None or new_desc is None:
-        pos = new_desc.pos if new_desc is not None else new.pos
-        err_add(ctx.errors, pos, 'CHK_UNDECIDED_DESCRIPTION', ())
+    if old_desc is None:
+        err_add(ctx.errors, new_desc.pos, 'CHK_UNDECIDED_DESCRIPTION', ())
+        return
+    if new_desc is None:
+        err_add(ctx.errors, new.pos, 'CHK_DESCRIPTION_REMOVED', ())
         return
     if old_desc.arg != new_desc.arg:
         err_add(ctx.errors, new_desc.pos, 'CHK_UNDECIDED_DESCRIPTION', ())
@@ -1307,16 +1354,18 @@ def chk_leafref(old, new, oldts, newts, ctx):
 
 def chk_identityref(old, new, oldts, newts, ctx):
     # verify that the bases are the same
-    extra = [n for n in newts.idbases]
-    for oidbase in oldts.idbases:
-        for nidbase in newts.idbases:
-            if (nidbase.i_module.i_modulename ==
-                    oidbase.i_module.i_modulename and
-                    nidbase.arg.split(':')[-1] == oidbase.arg.split(':')[-1]):
-                extra.remove(nidbase)
-    for n in extra:
+    old_ids = [(base.i_module.i_modulename, base.arg.split(':')[-1])
+               for base in oldts.idbases]
+    new_ids = [(base.i_module.i_modulename, base.arg.split(':')[-1])
+               for base in newts.idbases]
+    for n in newts.idbases:
+        key = (n.i_module.i_modulename, n.arg.split(':')[-1])
+        if key in old_ids:
+            continue
         err_add(ctx.errors, n.pos, 'CHK_DEF_ADDED',
                 ('base', n.arg))
+    if len(set(old_ids) - set(new_ids)) > 0:
+        mark_non_schema_bc_change(ctx)
 
 def chk_instance_identifier(old, new, oldts, newts, ctx):
     # FIXME:

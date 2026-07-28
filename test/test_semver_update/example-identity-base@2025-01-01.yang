@@ -1,0 +1,17 @@
+module example-identity-base {
+  yang-version 1.1;
+  namespace "urn:example:identity-base";
+  prefix eib;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Add an identity base.";
+    ysv:version "1.1.0";
+  }
+
+  identity parent;
+  identity child {
+    base parent;
+  }
+}
