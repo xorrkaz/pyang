@@ -610,6 +610,151 @@ class EffectiveUpdateTest(unittest.TestCase):
                 self.assertIn('probe:/cont/run/%s/x' % direction,
                               result.stdout)
 
+    def test_typed_defaults(self):
+        for keyword in ('leaf', 'leaf-list', 'typedef'):
+            for type_, old, new, version in (
+                    ('uint8', '0x10', '16', '1.0.1'),
+                    ('uint8', '020', '16', '1.0.1'),
+                    ('int8', '-0x10', '-16', '1.0.1'),
+                    ('decimal64 { fraction-digits 3; }', '1.0', '1.000',
+                     '1.0.1'),
+                    ('decimal64 { fraction-digits 3; }', '-0.0', '0',
+                     '1.0.1'),
+                    ('decimal64 { fraction-digits 18; }',
+                     '1.000000000000000001', '1.000000000000000002', '2.0.0'),
+                    ('bits { bit a; bit b; }', 'a b', 'b a', '1.0.1'),
+                    ('bits { bit a; bit b; }', 'a b', 'a  b', '1.0.1'),
+                    ('binary', 'AQ==', 'AQ== ', '1.0.1'),
+                    ('binary', 'AQ==', 'Ag==', '2.0.0'),
+                    ('string', '016', '16', '2.0.0'),
+                    ('string', 'a b', 'a  b', '2.0.0'),
+                    ('boolean', 'true', 'false', '2.0.0'),
+                    ('enumeration { enum a; enum b; }', 'a', 'b', '2.0.0'),
+                    ('uint8', '16', '17', '2.0.0'),
+                    ('decimal64 { fraction-digits 3; }', '1.1', '1.2',
+                     '2.0.0')):
+                with self.subTest(keyword=keyword, type_=type_, old=old,
+                                  new=new):
+                    type_stmt = 'type ' + type_
+                    if not type_.endswith('}'):
+                        type_stmt += ';'
+                    definition = ('%s x { %s default "%%s"; }' %
+                                  (keyword, type_stmt))
+                    result = self.compare(definition % old, definition % new,
+                                          version)
+                    if version == '1.0.1':
+                        self.assertNotIn('CHK_', result.stderr)
+                    else:
+                        diagnostic = ('CHK_DEF_REMOVED'
+                                      if keyword == 'leaf-list' else
+                                      'CHK_DEF_CHANGED')
+                        self.assertIn(diagnostic, result.stderr)
+                        self.assertIn('default', result.stdout)
+
+    def test_union_defaults(self):
+        for keyword in ('leaf', 'leaf-list', 'typedef'):
+            for members, old, new, version in (
+                    ('type uint8; type string;', '020', '16', '1.0.1'),
+                    ('type string; type uint8;', '020', '16', '2.0.0'),
+                    ('type bits { bit a; bit b; } type string;',
+                     'a b', 'b a', '1.0.1'),
+                    ('type union { type uint8; type boolean; } type string;',
+                     '0x10', '16', '1.0.1'),
+                    ('type uint8 { range "1"; } type string;',
+                     '020', '16', '2.0.0')):
+                with self.subTest(keyword=keyword, members=members):
+                    definition = ('%s x { type union { %s } default "%%s"; }' %
+                                  (keyword, members))
+                    self.compare(definition % old, definition % new, version)
+
+    def test_equivalent_inherited_defaults(self):
+        for keyword in ('leaf', 'leaf-list'):
+            for type_, old, new in (
+                    ('uint8', '020', '16'),
+                    ('decimal64 { fraction-digits 3; }', '1.0', '1.000'),
+                    ('bits { bit a; bit b; }', 'a b', 'b a'),
+                    ('union { type uint8; type string; }', '020', '16'),
+                    ('bits { bit a; }', '', ''),
+                    ('boolean', 'false', 'false')):
+                with self.subTest(keyword=keyword, type_=type_):
+                    type_stmt = 'type ' + type_
+                    if not type_.endswith('}'):
+                        type_stmt += ';'
+                    prefix = ('typedef t { %s default "%s"; } '
+                              'typedef mid { type t; } ' % (type_stmt, old))
+                    result = self.compare(
+                        prefix + '%s x { type mid; }' % keyword,
+                        prefix + '%s x { type mid; default "%s"; }' %
+                        (keyword, new), '1.0.1')
+                    self.assertNotIn('CHK_', result.stderr)
+
+    def test_typed_leaf_list_defaults(self):
+        for new, version in (
+                ('default 17; default 16;', '1.0.1'),
+                ('default 16; default 18;', '2.0.0'),
+                ('default 16; default 17; default 18;', '1.1.0')):
+            with self.subTest(new=new):
+                self.compare('leaf-list x { type uint8; '
+                             'default 0x10; default 0x11; }',
+                             'leaf-list x { type uint8; %s }' % new, version)
+
+    def test_identity_defaults(self):
+        local = ('identity base; identity one { base base; } '
+                 'leaf x { type identityref { base base; } default "%s"; }')
+        self.compare(local % 'one', local % 'p:one', '1.0.1')
+        extra = {'dep.yang':
+                 'module dep { yang-version 1.1; namespace urn:dep; prefix d; '
+                 'identity base; identity one { base base; } '
+                 'identity two { base base; } '
+                 'typedef t { type identityref { base base; } default one; } '
+                 'typedef u { type union { type identityref { base base; } '
+                 'type string; } default one; } }'}
+        body = ('import dep { prefix d; } @REV@ '
+                'leaf x { type identityref { base d:base; } default d:one; }')
+        self.compare(body, body.replace('prefix d;', 'prefix other;').
+                     replace('d:', 'other:'), '1.0.1', extra=extra)
+        self.compare(body, body.replace('default d:one', 'default d:two'),
+                     '2.0.0', extra=extra)
+        for type_ in ('t', 'u'):
+            with self.subTest(type_=type_):
+                old = ('import dep { prefix d; } @REV@ '
+                       'leaf x { type d:%s; }' % type_)
+                new = old.replace('type d:%s;' % type_,
+                                  'type d:%s; default d:one;' % type_)
+                self.compare(old, new, '1.0.1', extra=extra)
+
+    def test_leafref_defaults(self):
+        old = ('leaf target { type uint8; } leaf x { '
+               'type leafref { path ../target; } default 020; }')
+        self.compare(old, old.replace('default 020', 'default 16'), '1.0.1')
+        self.compare(old, old.replace('default 020', 'default 17'), '2.0.0')
+
+    def test_equivalent_refined_defaults(self):
+        definition = 'leaf x { type uint8; }'
+        for new, version in (('16', '1.0.1'), ('17', '2.0.0')):
+            with self.subTest(new=new):
+                result = self.compare(
+                    (definition, 'refine x { default 0x10; }'),
+                    (definition, 'refine x { default %s; }' % new),
+                    version, refine=True)
+                if version == '1.0.1':
+                    self.assertNotIn('CHK_', result.stderr)
+                else:
+                    self.assertIn('/cont/x', result.stdout)
+
+    def test_imported_grouping_defaults(self):
+        extra = {'dep.yang':
+                 'module dep { yang-version 1.1; namespace urn:dep; prefix d; '
+                 'identity base; identity one { base base; } '
+                 'grouping g { leaf x { type identityref { base base; } '
+                 'default d:one; } } }'}
+        old = ('import dep { prefix dep; } @REV@ '
+               'container cont { uses dep:g; }')
+        new = old.replace('uses dep:g;',
+                          'uses dep:g { refine x { default dep:one; } }')
+        result = self.compare(old, new, '1.0.1', extra=extra)
+        self.assertNotIn('CHK_', result.stderr)
+
     def test_defaults(self):
         for keyword in ('leaf', 'leaf-list'):
             for old, new, version in (('', 'default a;', '1.1.0'),

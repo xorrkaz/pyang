@@ -5,6 +5,7 @@ and Section 3.1 of RFC XXXX.
 """
 
 import copy
+import decimal
 import optparse
 import sys
 import os
@@ -1083,14 +1084,49 @@ def chk_units(old, new, ctx):
     elif newunits.arg != oldunits.arg:
         err_def_changed(oldunits, newunits, ctx)
 
+def default_value(type_spec, value, module, pos):
+    if type_spec is None:
+        return value
+    if isinstance(type_spec, types.PathTypeSpec):
+        target = getattr(type_spec, 'i_target_node', None)
+        if target is not None:
+            return default_value(target.search_one('type').i_type_spec,
+                                 value, module, pos)
+    if isinstance(type_spec, types.UnionTypeSpec):
+        for index, member in enumerate(type_spec.types):
+            spec = member.i_type_spec
+            if spec is None:
+                continue
+            parsed = spec.str_to_val([], pos, value, module)
+            if parsed is not None and spec.validate([], pos, parsed, module):
+                return ('union', index,
+                        default_value(spec, value, module, pos))
+    parsed = type_spec.str_to_val([], pos, value, module)
+    if isinstance(parsed, types.Decimal64Value):
+        parsed = decimal.Decimal(str(parsed))
+    elif (isinstance(parsed, statements.Statement) and
+          parsed.keyword == 'identity'):
+        parsed = (parsed.i_module.i_modulename, parsed.arg)
+    elif isinstance(parsed, list):
+        parsed = frozenset(parsed)
+    return (type_spec.name, parsed)
+
 def effective_defaults(stmt):
     defaults = stmt.search('default')
-    if defaults:
-        return [(s.arg, s) for s in defaults]
     type_ = stmt.search_one('type')
+    type_spec = getattr(type_, 'i_type_spec', None)
+    if defaults:
+        return [(default_value(type_spec, s.arg, s.i_orig_module, s.pos), s)
+                for s in defaults]
     typedef = getattr(type_, 'i_typedef', None)
     if typedef is not None and getattr(typedef, 'i_default', None) is not None:
-        return [(typedef.i_default_str, None)]
+        # Resolve prefixes in the module that declares the inherited default.
+        source = typedef
+        while source.search_one('default') is None:
+            source = source.search_one('type').i_typedef
+        default = source.search_one('default')
+        return [(default_value(type_spec, default.arg, default.i_orig_module,
+                               default.pos), None)]
     return []
 
 def chk_default(old, new, ctx):
