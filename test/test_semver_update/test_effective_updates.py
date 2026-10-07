@@ -12,7 +12,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 
 class EffectiveUpdateTest(unittest.TestCase):
 
-    def compare(self, old, new, version, refine=False, extra=None):
+    def compare(self, old, new, version, refine=False, extra=None,
+                old_version=None, new_version=None):
         with tempfile.TemporaryDirectory() as directory:
             for name, body in (extra or {}).items():
                 with open(os.path.join(directory, name), 'w') as stream:
@@ -22,12 +23,19 @@ class EffectiveUpdateTest(unittest.TestCase):
                 if refine:
                     body = ('grouping g { %s } '
                             'container cont { uses g { %s } }' % body)
+                declared = old_version if date == '2000-01-01' else new_version
+                revision = 'revision %s;' % date
+                if declared is not None:
+                    revision = ('revision %s { ysv:version "%s"; }' %
+                                (date, declared))
                 if '@REV@' in body:
-                    body = body.replace('@REV@', 'revision %s;' % date)
+                    body = body.replace('@REV@', revision)
                 elif body.startswith(('import ', 'include ', 'reference ')):
-                    body = '%s revision %s;' % (body, date)
+                    body = '%s %s' % (body, revision)
                 else:
-                    body = 'revision %s; %s' % (date, body)
+                    body = '%s %s' % (revision, body)
+                if old_version is not None or new_version is not None:
+                    body = 'import ietf-yang-semver { prefix ysv; } ' + body
                 text = ('module probe { yang-version 1.1; '
                         'namespace urn:probe; '
                         'prefix p; %s }' % body)
@@ -39,9 +47,11 @@ class EffectiveUpdateTest(unittest.TestCase):
                 paths.append(path)
             env = os.environ.copy()
             env['PYTHONPATH'] = ROOT
+            module_path = directory + os.pathsep + os.path.join(
+                ROOT, 'test/test_semver_update')
             result = subprocess.run(
                 [sys.executable, os.path.join(ROOT, 'bin/pyang'),
-                 '-p', directory, '-P', directory, '--print-error-code',
+                 '-p', module_path, '-P', module_path, '--print-error-code',
                  '--check-update-from', paths[0], '--check-update-semver',
                  '--check-update-nbc-verbose', paths[1]],
                 env=env, capture_output=True, text=True, check=False)
@@ -52,7 +62,7 @@ class EffectiveUpdateTest(unittest.TestCase):
                 if ': error: ' in line:
                     self.assertIn(': error: CHK_', line)
             self.assertEqual(result.returncode,
-                             int('NBC: check_update' in result.stdout),
+                             int(': error: ' in result.stderr),
                              result.stdout + result.stderr)
             return result
 
@@ -189,6 +199,103 @@ class EffectiveUpdateTest(unittest.TestCase):
         result = self.compare(definitions + 'leaf x { type a; }',
                               definitions + 'leaf x { type b; }', '1.1.0')
         self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
+
+    def test_sticky_semver_modifiers(self):
+        for modifier in ('compatible', 'non_compatible'):
+            old_version = '1.2.3_' + modifier
+            suggested = '1.2.4_' + modifier
+            for new, new_version in (
+                    ('leaf x { type string; }', '1.2.5_' + modifier),
+                    ('leaf x { type string; } leaf y { type string; }',
+                     '1.2.5_' + modifier),
+                    ('leaf x { type string; description new; }',
+                     '1.2.4_' + modifier),
+                    ('leaf x { type string; description new; }',
+                     '1.2.5_' + modifier)):
+                with self.subTest(modifier=modifier, new=new,
+                                  new_version=new_version):
+                    old = 'leaf x { type string; }'
+                    if 'description' in new:
+                        old = 'leaf x { type string; description old; }'
+                    result = self.compare(old, new, suggested,
+                                          old_version=old_version,
+                                          new_version=new_version)
+                    self.assertNotIn('CHK_BAD_SEMVER', result.stderr)
+                    if 'description' in new:
+                        self.assertIn('CHK_UNDECIDED_DESCRIPTION',
+                                      result.stderr)
+
+    def test_semver_nbc_modifier_bumps(self):
+        for old_version, new_version, valid in (
+                ('1.2.3', '1.2.4_non_compatible', True),
+                ('1.2.3_compatible', '1.2.4_non_compatible', True),
+                ('1.2.3_non_compatible', '1.2.4_non_compatible', True),
+                ('1.2.3_non_compatible', '1.2.3_non_compatible', False),
+                ('1.2.3_non_compatible', '1.2.2_non_compatible', False),
+                ('1.2.3', '1.2.3_non_compatible', False),
+                ('1.2.3', '1.2.2_non_compatible', False),
+                ('1.2.3', '1.1.9_non_compatible', False),
+                ('1.2.3', '1.3.0_non_compatible', False),
+                ('1.2.3_non_compatible', '1.3.0_non_compatible', False),
+                ('1.2.3_non_compatible', '2.0.0', True)):
+            with self.subTest(old=old_version, new=new_version):
+                result = self.compare('leaf x { type string; }',
+                                      'leaf x { type uint32; }', '2.0.0',
+                                      old_version=old_version,
+                                      new_version=new_version)
+                if valid:
+                    self.assertNotIn('CHK_BAD_SEMVER_NBC_BUMP', result.stderr)
+                else:
+                    self.assertIn('CHK_BAD_SEMVER_NBC_BUMP', result.stderr)
+
+    def test_semver_modifier_branch_scope(self):
+        for old_version, new_version, invalid in (
+                ('1.2.3_compatible', '1.2.4', True),
+                ('1.2.3_non_compatible', '1.2.4', True),
+                ('1.2.3_non_compatible', '1.2.4_compatible', True),
+                ('1.2.3_compatible', '1.3.0', False),
+                ('1.2.3_non_compatible', '1.3.0', False),
+                ('1.2.3_non_compatible', '1.3.1_compatible', False),
+                ('1.2.3_non_compatible', '1.3.1_non_compatible', False)):
+            with self.subTest(old=old_version, new=new_version):
+                modifier = old_version.split('_', 1)[1]
+                result = self.compare('leaf x { type string; }',
+                                      'leaf x { type string; }',
+                                      '1.2.4_' + modifier,
+                                      old_version=old_version,
+                                      new_version=new_version)
+                if invalid:
+                    self.assertIn('CHK_BAD_SEMVER_COMPAT_MODIFIER',
+                                  result.stderr)
+                else:
+                    self.assertNotIn('CHK_BAD_SEMVER', result.stderr)
+
+    def test_semver_modifier_policy_warnings(self):
+        for old_version, new_version, descriptions, diagnostic in (
+                ('1.2.3', '1.2.4_non_compatible', False,
+                 'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC'),
+                ('1.2.3_compatible', '1.2.4_non_compatible', False,
+                 'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC'),
+                ('1.2.3_non_compatible', '2.0.0_non_compatible', False,
+                 'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC'),
+                ('1.2.3', '1.2.4_compatible', True,
+                 'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC'),
+                ('1.2.3_compatible', '1.3.0_compatible', True,
+                 'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC'),
+                ('1.2.3_non_compatible', '1.3.0_non_compatible', True,
+                 'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC')):
+            with self.subTest(old=old_version, new=new_version):
+                old = 'leaf x { type string; }'
+                new = old
+                if descriptions:
+                    old = 'leaf x { type string; description old; }'
+                    new = 'leaf x { type string; description new; }'
+                modifier = old_version[len('1.2.3'):]
+                result = self.compare(old, new, '1.2.4' + modifier,
+                                      old_version=old_version,
+                                      new_version=new_version)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertNotIn(': error: ', result.stderr)
 
     def test_action_parameters(self):
         for direction in ('input', 'output'):

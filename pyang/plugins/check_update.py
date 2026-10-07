@@ -200,6 +200,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_MISSING_NBC_EXTENSION', 3,
             "rev:non-backwards-compatible is required for this revision")
         error.add_error_code(
+            'CHK_BAD_SEMVER_COMPAT_MODIFIER', 3,
+            "declared ysv:version %s removes or weakens the sticky "
+            "compatibility modifier from %s within the same MAJOR.MINOR branch")
+        error.add_error_code(
             'CHK_BAD_SEMVER_NBC_BUMP', 3,
             "declared ysv:version %s does not include a required MAJOR/_non_compatible bump for known NBC changes (suggested %s)")
         error.add_error_code(
@@ -656,12 +660,14 @@ def semver_change_class(old_version, new_version):
           newp['minor'] == oldp['minor'] and
           newp['patch'] > oldp['patch']):
         cls = 'patch'
-    # YANG Semver compatibility tags override numeric interpretation.
+    # Modifiers describe patch changes within a MAJOR.MINOR branch.
+    # A carried-forward modifier does not classify the current change.
+    if cls != 'patch' or newp['compat'] == oldp['compat']:
+        return cls
     if newp['compat'] == 'non_compatible':
         return 'major'
-    if newp['compat'] == 'compatible':
-        if cls in ('none', 'patch'):
-            return 'minor'
+    if newp['compat'] == 'compatible' and oldp['compat'] is None:
+        return 'minor'
     return cls
 
 def check_declared_semver(ctx, info, old_version, recommendation,
@@ -679,9 +685,24 @@ def check_declared_semver(ctx, info, old_version, recommendation,
     suggested_class = semver_change_class(old_version, recommendation)
     if declared_class is None or suggested_class is None:
         return
+    oldp = yang_semver.parse_version(old_version)
+    newp = yang_semver.parse_version(declared)
+    if (oldp['major'] == newp['major'] and
+        oldp['minor'] == newp['minor'] and
+        oldp['compat'] is not None and
+        (newp['compat'] is None or
+         (oldp['compat'] == 'non_compatible' and
+          newp['compat'] == 'compatible'))):
+        err_add(ctx.errors, new_version_stmt.pos,
+                'CHK_BAD_SEMVER_COMPAT_MODIFIER', (declared, old_version))
+        return
     possible_nbc_changes = has_possible_nbc_changes(info['errors'])
     if nbc_changes:
-        if declared_class != 'major':
+        # A sticky _non_compatible patch can contain another NBC change.
+        nbc_bump = (declared_class == 'major' or
+                    (declared_class == 'patch' and
+                     newp['compat'] == 'non_compatible'))
+        if not nbc_bump:
             err_add(ctx.errors, new_version_stmt.pos, 'CHK_BAD_SEMVER_NBC_BUMP',
                     (declared, recommendation))
         return
