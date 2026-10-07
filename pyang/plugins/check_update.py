@@ -140,22 +140,26 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "a new must expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_MUST', 4,
-            "this must expression may be more constrained than before; expert review is recommended")
+            "this must expression may be more constrained than before; "
+            "expert review is recommended")
         error.add_error_code(
             'CHK_NEW_WHEN', 3,
             "a new when expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_WHEN', 4,
-            "this when expression may be different than before; expert review is recommended")
+            "this when expression may be different than before; "
+            "expert review is recommended")
         error.add_error_code(
             'CHK_UNDECIDED_PRESENCE', 4,
             "this presence expression may be different than before")
         error.add_error_code(
             'CHK_UNDECIDED_PATTERN', 4,
-            "this pattern restriction may be more constrained than before; expert review is recommended")
+            "this pattern restriction may be more constrained than before; "
+            "expert review is recommended")
         error.add_error_code(
             'CHK_UNDECIDED_DESCRIPTION', 4,
-            "the description change may have changed the semantics of the node")
+            "the description change may have changed the semantics "
+            "of the node")
         error.add_error_code(
             'CHK_DESCRIPTION_REMOVED', 3,
             "the description is illegally removed")
@@ -207,13 +211,17 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "compatibility modifier from %s within the same MAJOR.MINOR branch")
         error.add_error_code(
             'CHK_BAD_SEMVER_NBC_BUMP', 3,
-            "declared ysv:version %s does not include a required MAJOR/_non_compatible bump for known NBC changes (suggested %s)")
+            "declared ysv:version %s does not include a required "
+            "MAJOR/_non_compatible bump for known NBC changes (suggested %s)")
         error.add_error_code(
             'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC', 4,
-            "declared ysv:version %s includes a MAJOR/_non_compatible bump but no possible NBC changes were detected (suggested %s)")
+            "declared ysv:version %s includes a MAJOR/_non_compatible bump "
+            "but no possible NBC changes were detected (suggested %s)")
         error.add_error_code(
             'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC', 4,
-            "declared ysv:version %s includes only a MINOR/_compatible bump where suggestion is PATCH and only possible NBC changes were detected (suggested %s)")
+            "declared ysv:version %s includes only a MINOR/_compatible bump "
+            "where suggestion is PATCH and only possible NBC changes were "
+            "detected (suggested %s)")
 
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.check_update_from:
@@ -504,7 +512,8 @@ def reason_for_error(etag, eargs):
     if etag == 'CHK_UNDECIDED_PATTERN':
         return "pattern changed"
     if etag == 'CHK_UNDECIDED_DESCRIPTION':
-        return "the description change may have changed the semantics of the node"
+        return ("the description change may have changed the semantics "
+                "of the node")
     if etag == 'CHK_DESCRIPTION_REMOVED':
         return "description removed"
     return etag
@@ -531,7 +540,8 @@ def collect_nodes(errors, want_level, modules_by_ref):
             continue
         stmt = getattr(pos, 'top', None)
         desc = stmt_to_node_desc(stmt)
-        if (desc is None or desc.startswith('module ')) and pos.ref in modules_by_ref:
+        if ((desc is None or desc.startswith('module ')) and
+            pos.ref in modules_by_ref):
             found = find_stmt_by_line(modules_by_ref[pos.ref], pos.line)
             if found is not None:
                 desc = stmt_to_node_desc(found)
@@ -619,11 +629,10 @@ def report_semver(ctx, info, nbc_changes):
     if recommendation is None:
         print("SUGGESTED-NEXT-YANG-SEMVER: unavailable (%s)" % reason)
         return
-    check_declared_semver(ctx, info, old_version, recommendation,
-                          change, nbc_changes)
-    newrev = info['newrev']
+    check_declared_semver(ctx, info, old_version, recommendation, nbc_changes)
     if used_default_old_version:
-        print("ASSUMED-OLD-YANG-SEMVER: 1.0.0 (old revision missing ysv:version)")
+        print("ASSUMED-OLD-YANG-SEMVER: 1.0.0 "
+              "(old revision missing ysv:version)")
     print("SUGGESTED-NEXT-YANG-SEMVER: %s" % recommendation)
     if nbc_changes:
         if ctx.opts.check_update_nbc_verbose:
@@ -676,8 +685,7 @@ def semver_change_class(old_version, new_version):
         return 'minor'
     return cls
 
-def check_declared_semver(ctx, info, old_version, recommendation,
-                          change, nbc_changes):
+def check_declared_semver(ctx, info, old_version, recommendation, nbc_changes):
     newrev = info['newrev']
     if newrev is None:
         return
@@ -709,7 +717,8 @@ def check_declared_semver(ctx, info, old_version, recommendation,
                     (declared_class == 'patch' and
                      newp['compat'] == 'non_compatible'))
         if not nbc_bump:
-            err_add(ctx.errors, new_version_stmt.pos, 'CHK_BAD_SEMVER_NBC_BUMP',
+            err_add(ctx.errors, new_version_stmt.pos,
+                    'CHK_BAD_SEMVER_NBC_BUMP',
                     (declared, recommendation))
         return
     if declared_class == 'major' and not possible_nbc_changes:
@@ -718,7 +727,7 @@ def check_declared_semver(ctx, info, old_version, recommendation,
                 (declared, recommendation))
         return
     if (possible_nbc_changes and declared_class == 'minor' and
-            suggested_class == 'patch'):
+        suggested_class == 'patch'):
         err_add(ctx.errors, new_version_stmt.pos,
                 'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC',
                 (declared, recommendation))
@@ -919,7 +928,8 @@ def chk_i_children(old, new, ctx):
         chk_child(oldch, new, ctx)
 
     old_child_args = [oldch.arg for oldch in old.i_children]
-    added_new_children = [new_child for new_child in new.i_children if new_child.arg not in old_child_args]
+    added_new_children = [new_child for new_child in new.i_children
+                          if new_child.arg not in old_child_args]
     for newch in added_new_children:
         if statements.is_mandatory_node(newch):
             err_add(ctx.errors, newch.pos, 'CHK_NEW_MANDATORY', newch.arg)
