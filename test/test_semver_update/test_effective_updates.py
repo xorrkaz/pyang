@@ -13,7 +13,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 class EffectiveUpdateTest(unittest.TestCase):
 
     def compare(self, old, new, version, refine=False, extra=None,
-                old_version=None, new_version=None):
+                old_version=None, new_version=None, options=None):
         with tempfile.TemporaryDirectory() as directory:
             for name, body in (extra or {}).items():
                 with open(os.path.join(directory, name), 'w') as stream:
@@ -53,7 +53,8 @@ class EffectiveUpdateTest(unittest.TestCase):
                 [sys.executable, os.path.join(ROOT, 'bin/pyang'),
                  '-p', module_path, '-P', module_path, '--print-error-code',
                  '--check-update-from', paths[0], '--check-update-semver',
-                 '--check-update-nbc-verbose', paths[1]],
+                 '--check-update-nbc-verbose'] + list(options or []) +
+                [paths[1]],
                 env=env, capture_output=True, text=True, check=False)
             self.assertIn('SUGGESTED-NEXT-YANG-SEMVER: ' + version,
                           result.stdout.splitlines(),
@@ -200,6 +201,68 @@ class EffectiveUpdateTest(unittest.TestCase):
         result = self.compare(definitions + 'leaf x { type a; }',
                               definitions + 'leaf x { type b; }', '1.1.0')
         self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
+
+    def test_semver_tree_display_options(self):
+        used = ('grouping g { leaf x { type string; } %s } '
+                'container cont { uses g; }')
+        unused = 'grouping g { leaf x { type string; } %s }'
+        branches = ('container cont { leaf x { type string; } } '
+                    'container other { leaf z { type string; } %s }')
+        descriptions = ('grouping g { leaf x { type string; '
+                        'description %s; } } '
+                        'container cont { uses g; }')
+        for old, new, version in (
+                (used % '', used % 'leaf y { type string; }', '1.1.0'),
+                (unused % '', unused % 'leaf y { type string; }', '1.0.1'),
+                (branches % '', branches % 'leaf y { type string; }', '1.1.0'),
+                (descriptions % 'old', descriptions % 'new', '1.0.1')):
+            for options in (
+                    [], ['--tree-no-expand-uses'], ['--tree-print-groupings'],
+                    ['--tree-module-name-prefix'], ['--tree-print-yang-data'],
+                    ['--tree-print-structures'], ['--tree-depth', '1'],
+                    ['--tree-path', '/cont'], ['--tree-line-length', '20'],
+                    ['--tree-no-expand-uses', '--tree-print-groupings',
+                     '--tree-depth', '1', '--tree-module-name-prefix']):
+                with self.subTest(old=old, options=options):
+                    result = self.compare(old, new, version,
+                                          options=['-f', 'tree'] + options)
+                    if ('--tree-print-groupings' in options and
+                        'grouping' in new):
+                        self.assertIn('grouping g:', result.stdout)
+                    if '--tree-no-expand-uses' in options and 'uses g' in new:
+                        if '--tree-depth' not in options:
+                            self.assertIn('-u g', result.stdout)
+                            self.assertNotIn('x?', result.stdout)
+                    if '--tree-depth' in options and 'container' in new:
+                        self.assertIn('...', result.stdout)
+                    if '--tree-path' in options and 'container other' in new:
+                        self.assertNotIn('other', result.stdout)
+                        self.assertNotIn('y?', result.stdout)
+                    if 'description' in old:
+                        self.assertIn('CHK_UNDECIDED_DESCRIPTION',
+                                      result.stderr)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+
+    def test_tree_extension_output_options_preserved(self):
+        for module, prefix, keyword, option, section in (
+                ('ietf-restconf', 'rc', 'yang-data', '--tree-print-yang-data',
+                 'yang-data demo:'),
+                ('ietf-yang-structure-ext', 'sx', 'structure',
+                 '--tree-print-structures', 'structure demo:')):
+            with self.subTest(module=module):
+                extra = {module + '.yang':
+                         'module %s { yang-version 1.1; namespace urn:%s; '
+                         'prefix %s; extension %s { argument name; } }' %
+                         (module, module, prefix, keyword)}
+                body = ('import %s { prefix %s; } @REV@ '
+                        '%s:%s demo { container data { '
+                        'leaf x { type string; } } }' %
+                        (module, prefix, prefix, keyword))
+                result = self.compare(body, body, '1.0.1', extra=extra,
+                                      options=['-f', 'tree', option])
+                self.assertIn(section, result.stdout)
+                self.assertIn('x?', result.stdout)
 
     def test_semver_version_collisions(self):
         cases = []

@@ -4,6 +4,7 @@ the rules defined in Section 10 of RFC 6020, Section 11 of RFC 7950
 and Section 3.1 of RFC XXXX.
 """
 
+import copy
 import optparse
 import sys
 import os
@@ -565,11 +566,14 @@ def find_effective_stmts(stmt, pos, visited, node=None):
 
 def get_tree_output(ctx, mod):
     buf = io.StringIO()
-    if not hasattr(ctx.opts, 'tree_no_expand_uses'):
-        ctx.opts.tree_no_expand_uses = False
-    if not hasattr(ctx.opts, 'modname_prefix'):
-        ctx.opts.modname_prefix = False
-    tree.emit_tree(ctx, [mod], buf, None, None, None)
+    tree_ctx = copy.copy(ctx)
+    tree_ctx.opts = copy.copy(ctx.opts)
+    # Use fixed comparison options without changing the requested tree output.
+    for option in ('tree_no_expand_uses', 'modname_prefix',
+                   'tree_print_groupings', 'tree_print_yang_data',
+                   'tree_print_structures'):
+        setattr(tree_ctx.opts, option, False)
+    tree.emit_tree(tree_ctx, [mod], buf, None, None, None)
     return buf.getvalue()
 
 def has_schema_changes(info):
