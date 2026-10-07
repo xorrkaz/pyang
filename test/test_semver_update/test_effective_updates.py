@@ -109,6 +109,87 @@ class EffectiveUpdateTest(unittest.TestCase):
                 self.compare(definition + 'range "%s"; } }' % old,
                              definition + 'range "%s"; } }' % new, version)
 
+    def test_inherited_patterns(self):
+        for keyword in ('leaf', 'leaf-list'):
+            for oldpattern, newpattern, version in (
+                    ('pattern "a.*";', 'pattern "b.*";', '2.0.0'),
+                    ('', 'pattern "a.*";', '2.0.0'),
+                    ('pattern "a.*";', '', '2.0.0'),
+                    ('pattern "[a-z]+";',
+                     'pattern "[a-z]+" { modifier invert-match; }', '2.0.0'),
+                    ('pattern "a.*";', 'pattern "a.*";', '1.1.0')):
+                with self.subTest(keyword=keyword, old=oldpattern,
+                                  new=newpattern):
+                    definitions = ('typedef a { type string { %s } } '
+                                   'typedef b { type string { %s } } ' %
+                                   (oldpattern, newpattern))
+                    result = self.compare(
+                        definitions + '%s x { type a; }' % keyword,
+                        definitions + '%s x { type b; }' % keyword, version)
+                    if version == '2.0.0':
+                        self.assertIn('CHK_UNDECIDED_PATTERN', result.stderr)
+                        self.assertIn('POSSIBLE-NBC-CHANGE(S):', result.stdout)
+                        self.assertIn('probe:/x (pattern changed)',
+                                      result.stdout)
+                        self.assertIn('Consult document authors and '
+                                      'YANG Doctors.',
+                                      result.stdout)
+                        self.assertNotIn('CHK_MISSING_NBC_EXTENSION',
+                                         result.stderr)
+                    else:
+                        self.assertNotIn('CHK_UNDECIDED_PATTERN',
+                                         result.stderr)
+
+    def test_nested_patterns(self):
+        for other, version in (('b.*', '2.0.0'), ('a.*', '1.1.0')):
+            with self.subTest(other=other):
+                definitions = (
+                    'typedef base-a { type string { pattern "a.*"; } } '
+                    'typedef base-b { type string { pattern "%s"; } } '
+                    'typedef mid-a { type base-a { length "1..max"; } } '
+                    'typedef mid-b { type base-b { length "1..max"; } } '
+                    'typedef a { type mid-a { pattern "[a-z]+"; } } '
+                    'typedef b { type mid-b { pattern "[a-z]+"; } } ' % other)
+                result = self.compare(definitions + 'leaf x { type a; }',
+                                      definitions + 'leaf x { type b; }',
+                                      version)
+                if version == '2.0.0':
+                    self.assertIn('CHK_UNDECIDED_PATTERN', result.stderr)
+                    self.assertIn('probe:/x (pattern changed)', result.stdout)
+                else:
+                    self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
+
+    def test_imported_patterns(self):
+        extra = {'dep.yang':
+                 'module dep { yang-version 1.1; namespace urn:dep; prefix d; '
+                 'typedef a { type string { pattern "a.*"; } } '
+                 'typedef b { type string { pattern "b.*"; } } }'}
+        header = 'import dep { prefix d; } @REV@ '
+        result = self.compare(header + 'leaf x { type d:a; }',
+                              header + 'leaf x { type d:b; }',
+                              '2.0.0', extra=extra)
+        self.assertIn('CHK_UNDECIDED_PATTERN', result.stderr)
+        self.assertIn('probe:/x (pattern changed)', result.stdout)
+        old = (header + 'grouping g { leaf x { type d:a; } } '
+               'container one { uses g; } container two { uses g; }')
+        result = self.compare(old, old.replace('type d:a', 'type d:b'),
+                              '2.0.0', extra=extra)
+        self.assertIn('probe:/one/x (pattern changed)', result.stdout)
+        self.assertIn('probe:/two/x (pattern changed)', result.stdout)
+
+    def test_equivalent_patterns(self):
+        self.compare('leaf x { type string { '
+                     'pattern "a.*"; pattern ".*z"; } }',
+                     'leaf x { type string { '
+                     'pattern ".*z"; pattern "a.*"; } }',
+                     '1.0.1')
+        definitions = ('typedef base { type string { pattern "a.*"; } } '
+                       'typedef a { type base; } '
+                       'typedef b { type base { pattern "a.*"; } } ')
+        result = self.compare(definitions + 'leaf x { type a; }',
+                              definitions + 'leaf x { type b; }', '1.1.0')
+        self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
+
     def test_defaults(self):
         for keyword in ('leaf', 'leaf-list'):
             for old, new, version in (('', 'default a;', '1.1.0'),

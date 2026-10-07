@@ -1374,21 +1374,22 @@ def chk_length(old, new, oldts, newts, ctx):
     chk_interval_restriction(old, new, ots, nts, 'lengths', 'length', ctx)
 
 def chk_pattern(old, new, ctx):
-    old_patterns = old.search('pattern')
-    new_patterns = new.search('pattern')
-    if len(old_patterns) == 0 and len(new_patterns) == 0:
-        return
-    old_specs = [pattern_spec(p) for p in old_patterns]
-    new_specs = [pattern_spec(p) for p in new_patterns]
+    old_specs = effective_patterns(old.i_type_spec)
+    new_specs = effective_patterns(new.i_type_spec)
     if old_specs == new_specs:
         return
+    new_patterns = new.search('pattern')
     pos = new_patterns[0].pos if len(new_patterns) > 0 else new.pos
     err_add(ctx.errors, pos, 'CHK_UNDECIDED_PATTERN', ())
 
-def pattern_spec(stmt):
-    modifier = stmt.search_one('modifier')
-    modifier_arg = modifier.arg if modifier is not None else None
-    return (stmt.arg, modifier_arg)
+def effective_patterns(type_spec):
+    patterns = set()
+    while type_spec is not None:
+        if isinstance(type_spec, types.PatternTypeSpec):
+            patterns.update((pattern.spec, pattern.invert_match)
+                            for pattern in type_spec.res)
+        type_spec = type_spec.base
+    return patterns
 
 def chk_description(old, new, ctx):
     old_desc = old.search_one('description')
