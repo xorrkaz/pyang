@@ -1,0 +1,26 @@
+module example-data-order {
+  yang-version 1.1;
+  namespace "urn:example:data-order";
+  prefix edo;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.0.0";
+  }
+
+  container top {
+    leaf first {
+      type string;
+    }
+    container middle {
+      leaf value {
+        type string;
+      }
+    }
+    leaf last {
+      type string;
+    }
+  }
+}

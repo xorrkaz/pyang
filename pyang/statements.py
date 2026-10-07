@@ -1564,16 +1564,17 @@ def v_expand_1_uses(ctx, stmt):
     def replace_from_refinement(target, refinement, keyword, valid_keywords,
                                 v_fun=None):
         """allow `keyword` as a refinement in `valid_keywords`"""
-        new = refinement.search_one(keyword)
-        if new is not None and target.keyword in valid_keywords:
-            old = target.search_one(keyword)
-            if old is not None:
+        newstmts = refinement.search(keyword)
+        if newstmts and target.keyword in valid_keywords:
+            # A leaf-list refinement replaces the entire set of defaults.
+            for old in target.search(keyword):
                 target.substmts.remove(old)
-            if v_fun is not None:
-                v_fun(ctx, target, new)
-            new.parent = target
-            target.substmts.append(new)
-        elif new is not None:
+            for new in newstmts:
+                if v_fun is not None:
+                    v_fun(ctx, target, new)
+                new.parent = target
+                target.substmts.append(new)
+        elif newstmts:
             err_add(ctx.errors, refinement.pos, 'BAD_REFINEMENT',
                     (target.keyword, target.i_module.i_modulename,
                      target.arg, keyword))

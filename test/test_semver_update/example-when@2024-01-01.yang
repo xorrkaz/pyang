@@ -1,0 +1,22 @@
+module example-when {
+  yang-version 1.1;
+  namespace "urn:example:when";
+  prefix ew;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.0.0";
+  }
+
+  container top {
+    leaf a {
+      type string;
+    }
+    leaf b {
+      type string;
+      when "../a = 'x'";
+    }
+  }
+}

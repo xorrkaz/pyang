@@ -1,0 +1,2 @@
+example-semver-nbc@2025-01-01.yang:12: error: CHK_BAD_SEMVER_NBC_BUMP
+example-semver-nbc@2025-01-01.yang:16: error: CHK_INVALID_STATUS

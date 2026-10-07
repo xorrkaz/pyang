@@ -1,0 +1,13 @@
+module prerelease-no-trailing-number {
+  yang-version 1.1;
+  namespace "urn:example:prerelease-no-trailing-number";
+  prefix pntn;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description
+      "Pre-release metadata without trailing numeric identifier.";
+    ysv:version "1.2.3-alpha";
+  }
+}

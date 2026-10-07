@@ -1,0 +1,16 @@
+module example-yang-version {
+  yang-version 1;
+  namespace "urn:example:yang-version";
+  prefix eyv;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2024-01-01 {
+    description "Initial version.";
+    ysv:version "1.0.0";
+  }
+
+  leaf name {
+    type string;
+  }
+}

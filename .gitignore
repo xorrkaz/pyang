@@ -33,3 +33,13 @@ venv/
 /test/test_json/test-data.xml
 /test/test_xsd/*.xsd
 /test/test_*/out/
+
+# Versioning test captures (expectations remain tracked).
+/test/test_semver_update/*.err
+/test/test_semver_update/*.diff
+/test/test_ietf_versioning/*.err
+/test/test_ietf_versioning/*.diff
+
+# Scratch-only versioning documentation.
+/YANG_VERSIONING.md
+/YANG_VERSIONING_FILES.txt

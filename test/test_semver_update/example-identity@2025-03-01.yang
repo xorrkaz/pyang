@@ -1,0 +1,19 @@
+module example-identity {
+  yang-version 1.1;
+  namespace "urn:example:identity";
+  prefix ei;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-03-01 {
+    description "Mark retired-id obsolete.";
+    ysv:version "2.0.0";
+  }
+
+  identity base-id;
+
+  identity retired-id {
+    base base-id;
+    status obsolete;
+  }
+}

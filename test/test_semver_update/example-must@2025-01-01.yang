@@ -1,0 +1,22 @@
+module example-must {
+  yang-version 1.1;
+  namespace "urn:example:must";
+  prefix em;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Update must expression.";
+    ysv:version "1.0.1";
+  }
+
+  container top {
+    leaf a {
+      type string;
+    }
+    leaf b {
+      type string;
+      must "../a = 'y'";
+    }
+  }
+}

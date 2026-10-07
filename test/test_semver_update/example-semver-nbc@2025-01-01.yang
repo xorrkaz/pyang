@@ -1,0 +1,21 @@
+module example-semver-nbc {
+  yang-version 1.1;
+  namespace "urn:example:semver-nbc";
+  prefix esn;
+
+  import ietf-yang-semver { prefix ysv; }
+  import ietf-yang-revisions { prefix rev; }
+
+  revision 2025-01-01 {
+    description "Mark leaf obsolete with insufficient bump.";
+    rev:non-backwards-compatible;
+    ysv:version "1.2.4";
+  }
+
+  container top {
+    leaf a {
+      status obsolete;
+      type string;
+    }
+  }
+}

@@ -1,0 +1,14 @@
+module example-no-semver {
+  yang-version 1.1;
+  namespace "urn:example:no-semver";
+  prefix ens;
+
+  revision 2025-01-01 {
+    description "Add leaf b without ysv:version.";
+  }
+
+  container top {
+    leaf a { type string; }
+    leaf b { type string; }
+  }
+}

@@ -1,0 +1,22 @@
+module example-when {
+  yang-version 1.1;
+  namespace "urn:example:when";
+  prefix ew;
+
+  import ietf-yang-semver { prefix ysv; }
+
+  revision 2025-01-01 {
+    description "Update when condition.";
+    ysv:version "1.0.1";
+  }
+
+  container top {
+    leaf a {
+      type string;
+    }
+    leaf b {
+      type string;
+      when "../a = 'y'";
+    }
+  }
+}

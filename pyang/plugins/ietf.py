@@ -11,6 +11,9 @@ from pyang import statements
 from pyang import error
 from pyang.error import err_add
 from pyang.plugins import lint
+from pyang.plugins import yang_semver
+
+revmod = 'ietf-yang-revisions'
 
 def pyang_plugin_init():
     plugin.register_plugin(IETFPlugin())
@@ -21,6 +24,7 @@ class IETFPlugin(lint.LintPlugin):
         self.found_8174 = False
         self.found_tlp = False
         self.mmap = {}
+        self.first_revision = True
 
         lint.LintPlugin.__init__(self)
         self.namespace_prefixes = ['urn:ietf:params:xml:ns:yang:']
@@ -52,6 +56,10 @@ class IETFPlugin(lint.LintPlugin):
             'grammar', ['description'],
             lambda ctx, s: self.v_chk_description(ctx, s))
 
+        statements.add_validation_fun(
+            'grammar', ['revision'],
+            lambda ctx, s: self.v_chk_revision(ctx, s))
+
         # register our error codes
         error.add_error_code(
             'IETF_MISSING_RFC8174', 4,
@@ -72,6 +80,17 @@ class IETFPlugin(lint.LintPlugin):
             + 'The text about which RFC this module is part of seems to be'
             + ' missing or is not correct'
             + ' (see pyang --ietf-help for details).')
+
+        error.add_error_code(
+            'IETF_MISSING_YANG_SEMVER', 4,
+            'RFC XXXX: 6.1: '
+            + 'The latest revision is missing a YANG Semver statement'
+            + ' (see pyang --ietf-help for details).')
+        error.add_error_code(
+            'IETF_MISSING_NBC_EXTENSION', 4,
+            'RFC XXXX: 3.2: '
+            + 'A major YANG Semver increment requires '
+            + 'rev:non-backwards-compatible on the latest revision')
 
     def pre_validate_ctx(self, ctx, modules):
         for mod in modules:
@@ -110,6 +129,15 @@ class IETFPlugin(lint.LintPlugin):
                 self.mmap[s.i_module.arg]['found_2119_keywords'] = True
                 self.mmap[s.i_module.arg]['description_pos'] = s.pos
 
+    def v_chk_revision(self, ctx, s):
+        if not self.first_revision:
+            return
+        if s.search_one(('ietf-yang-semver', 'version')) is None:
+            err_add(ctx.errors, s.pos,
+                    'IETF_MISSING_YANG_SEMVER', ())
+
+        self.first_revision = False
+
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.ietf:
             return
@@ -118,6 +146,29 @@ class IETFPlugin(lint.LintPlugin):
                 and not self.mmap[mod.arg]['found_8174']):
                 pos = self.mmap[mod.arg]['description_pos']
                 err_add(ctx.errors, pos, 'IETF_MISSING_RFC8174', ())
+            self._chk_nbc_extension(ctx, mod)
+
+    def _chk_nbc_extension(self, ctx, mod):
+        revs = [r for r in mod.search('revision')]
+        revs.sort(key=lambda r: r.arg)
+        if len(revs) < 2:
+            return
+        latest = revs[-1]
+        previous = revs[-2]
+        latest_version = latest.search_one(
+            (yang_semver.yang_semver_module_name, 'version'))
+        previous_version = previous.search_one(
+            (yang_semver.yang_semver_module_name, 'version'))
+        if latest_version is None or previous_version is None:
+            return
+        latest_parsed = yang_semver.parse_version(latest_version.arg)
+        previous_parsed = yang_semver.parse_version(previous_version.arg)
+        if latest_parsed is None or previous_parsed is None:
+            return
+        if latest_parsed['major'] > previous_parsed['major']:
+            if latest.search_one((revmod, 'non-backwards-compatible')) is None:
+                err_add(ctx.errors, latest.pos,
+                        'IETF_MISSING_NBC_EXTENSION', ())
 
 def print_help():
     print("""
@@ -153,6 +204,13 @@ must contain the following text:
      'MAY', and 'OPTIONAL' in this document are to be interpreted as
      described in BCP 14 (RFC 2119) (RFC 8174) when, and only when,
      they appear in all capitals, as shown here.
+
+All IETF and IANA modules must contain a YANG Semver version statement
+in their latest revision statement per RFC XXXX Section 6.1.
+
+If the latest revision has a greater YANG Semver MAJOR version than the
+previous revision, the latest revision must include the
+rev:non-backwards-compatible extension statement.
 """)
 
 rfc8174_str = \

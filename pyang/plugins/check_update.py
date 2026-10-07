@@ -1,6 +1,7 @@
 """YANG module update check tool
 This plugin checks if an updated version of a module follows
-the rules defined in Section 10 of RFC 6020 and Section 11 of RFC 7950.
+the rules defined in Section 10 of RFC 6020, Section 11 of RFC 7950
+and Section 3.1 of RFC XXXX.
 """
 
 import optparse
@@ -16,8 +17,12 @@ from pyang import error
 from pyang import util
 from pyang import types
 from pyang.error import err_add
+from pyang.plugins import yang_semver
+from pyang.plugins import tree
 
 sxmod = 'ietf-yang-structure-ext'
+revmod = 'ietf-yang-revisions'
+ysvmod = yang_semver.yang_semver_module_name
 
 def pyang_plugin_init():
     plugin.register_plugin(CheckUpdatePlugin())
@@ -29,7 +34,7 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
                                  metavar="OLDMODULE",
                                  dest="check_update_from",
                                  help="Verify that upgrade from OLDMODULE" \
-                                      " follows RFC 6020 and 7950 rules."),
+                                      " follows RFC 6020, 7950, and XXXX rules."),
             optparse.make_option("-P", "--check-update-from-path",
                                  dest="old_path",
                                  default=[],
@@ -48,6 +53,16 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
                                  dest="check_update_structures",
                                  action="store_true",
                                  help="Check sx:structures."),
+            optparse.make_option("--check-update-semver",
+                                 dest="check_update_semver",
+                                 action="store_true",
+                                 help="Print suggested next YANG Semver"
+                                      " based on the comparison."),
+            optparse.make_option("--check-update-nbc-verbose",
+                                 dest="check_update_nbc_verbose",
+                                 action="store_true",
+                                 help="Include node-level details for NBC"
+                                      " and possible NBC messages."),
             ]
         optparser.add_options(optlist)
 
@@ -68,6 +83,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "the module's namespace MUST NOT be changed"
             + " (RFC 7950: sec. 11, p3)")
         error.add_error_code(
+            'CHK_YANG_VERSION_CHANGED', 3,
+            "changing the YANG version from %s to %s is"
+            " non-backwards-compatible")
+        error.add_error_code(
             'CHK_NO_REVISION', 3,
             "a revision statement MUST be present"
             + " (RFC 6020: sec. 10, p2)")
@@ -85,7 +104,8 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             + " (RFC 7950: sec. 11, p2)")
         error.add_error_code(
             'CHK_DEF_REMOVED', 3,
-            "the %s '%s', defined at %s is illegally removed")
+            "the %s '%s', defined at %s is illegally removed"
+            + " or marked obsolete")
         error.add_error_code(
             'CHK_DEF_ADDED', 3,
             "the %s '%s' is illegally added")
@@ -102,6 +122,9 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             'CHK_CHILD_KEYWORD_CHANGED', 3,
             "the %s '%s' is illegally changed to a %s")
         error.add_error_code(
+            'CHK_DATA_NODE_MOVED', 3,
+            "the data node '%s' is illegally moved")
+        error.add_error_code(
             'CHK_MANDATORY_CONFIG', 3,
             "the node %s is changed to config true, but it is mandatory")
         error.add_error_code(
@@ -115,16 +138,25 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "a new must expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_MUST', 4,
-            "this must expression may be more constrained than before")
+            "this must expression may be more constrained than before; expert review is recommended")
         error.add_error_code(
             'CHK_NEW_WHEN', 3,
             "a new when expression cannot be added")
         error.add_error_code(
             'CHK_UNDECIDED_WHEN', 4,
-            "this when expression may be different than before")
+            "this when expression may be different than before; expert review is recommended")
         error.add_error_code(
             'CHK_UNDECIDED_PRESENCE', 4,
             "this presence expression may be different than before")
+        error.add_error_code(
+            'CHK_UNDECIDED_PATTERN', 4,
+            "this pattern restriction may be more constrained than before; expert review is recommended")
+        error.add_error_code(
+            'CHK_UNDECIDED_DESCRIPTION', 4,
+            "the description change may have changed the semantics of the node")
+        error.add_error_code(
+            'CHK_DESCRIPTION_REMOVED', 3,
+            "the description is illegally removed")
         error.add_error_code(
             'CHK_IMPLICIT_DEFAULT', 3,
             "the leaf had an implicit default")
@@ -164,12 +196,36 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
         error.add_error_code(
             'CHK_IO_ERROR', 1,
             "error %s: %s")
+        error.add_error_code(
+            'CHK_MISSING_NBC_EXTENSION', 3,
+            "rev:non-backwards-compatible is required for this revision")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_NBC_BUMP', 3,
+            "declared ysv:version %s does not include a required MAJOR/_non_compatible bump for known NBC changes (suggested %s)")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC', 4,
+            "declared ysv:version %s includes a MAJOR/_non_compatible bump but no possible NBC changes were detected (suggested %s)")
+        error.add_error_code(
+            'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC', 4,
+            "declared ysv:version %s includes only a MINOR/_compatible bump where suggestion is PATCH and only possible NBC changes were detected (suggested %s)")
 
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.check_update_from:
             return
+        # If parsing failed, pyang can call post_validate_ctx() with no modules.
+        # In that case, syntax errors are already reported; skip update checks.
+        if not modules:
+            return
 
-        check_update(ctx, modules[0])
+        info = check_update(ctx, modules[0])
+        if info is None:
+            return
+        nbc_changes = has_nbc_changes(info['errors'])
+        check_nbc_extension(ctx, info, nbc_changes)
+        if nbc_changes:
+            suppress_possible_nbc_warnings(ctx, info)
+        if ctx.opts.check_update_semver:
+            report_semver(ctx, info, nbc_changes)
 
 def check_update(ctx, newmod):
     oldpath = os.pathsep.join(ctx.opts.old_path)
@@ -209,12 +265,12 @@ def check_update(ctx, newmod):
     ctx.errors.extend(oldctx.errors)
 
     if oldmod is None:
-        return
+        return None
 
     for epos, etag, eargs in ctx.errors:
         if (epos.ref in (newmod.pos.ref, oldmod.pos.ref)
             and error.is_error(error.err_level(etag))):
-            return
+            return None
 
     if ctx.opts.verbose:
         print("Loaded old modules:")
@@ -223,28 +279,48 @@ def check_update(ctx, newmod):
             print("  %s" % filename)
         print("")
 
+    before_len = len(ctx.errors)
+    ctx.non_schema_bc_changes = False
     chk_module(ctx, oldmod, newmod)
+    return {
+        'oldctx': oldctx,
+        'newctx': ctx,
+        'oldmod': oldmod,
+        'newmod': newmod,
+        'oldrev': get_latest_revision_stmt(oldmod),
+        'newrev': get_latest_revision_stmt(newmod),
+        'errors': ctx.errors[before_len:],
+        'non_schema_bc_changes': ctx.non_schema_bc_changes,
+    }
 
 
 def chk_module(ctx, oldmod, newmod):
 
     chk_modulename(oldmod, newmod, ctx)
 
+    chk_yang_version(oldmod, newmod, ctx)
+
     chk_namespace(oldmod, newmod, ctx)
 
     chk_revision(oldmod, newmod, ctx)
+
+    chk_reference(oldmod, newmod, ctx)
+    chk_dependencies(oldmod, newmod, ctx)
 
     for olds in oldmod.search('feature'):
         chk_feature(olds, newmod, ctx)
 
     for olds in oldmod.search('identity'):
         chk_identity(olds, newmod, ctx)
+    chk_identity_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('typedef'):
         chk_typedef(olds, newmod, ctx)
+    chk_typedef_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('grouping'):
         chk_grouping(olds, newmod, ctx)
+    chk_grouping_additions(oldmod, newmod, ctx)
 
     for olds in oldmod.search('rpc'):
         chk_rpc(olds, newmod, ctx)
@@ -254,6 +330,7 @@ def chk_module(ctx, oldmod, newmod):
 
     for olds in oldmod.search('extension'):
         chk_extension(olds, newmod, ctx)
+    chk_extension_instances(oldmod, newmod, ctx)
 
     if ctx.opts.check_update_structures:
         for olds in oldmod.search((sxmod, 'structure')):
@@ -266,6 +343,13 @@ def chk_modulename(oldmod, newmod, ctx):
     if oldmod.arg != newmod.arg:
         errcode = verrcode('CHK_INVALID_MODULENAME', newmod)
         err_add(ctx.errors, newmod.pos, errcode, ())
+
+def chk_yang_version(oldmod, newmod, ctx):
+    if oldmod.i_version == '1' and newmod.i_version == '1.1':
+        newversion = newmod.search_one('yang-version')
+        pos = newversion.pos if newversion is not None else newmod.pos
+        err_add(ctx.errors, pos, 'CHK_YANG_VERSION_CHANGED',
+                (oldmod.i_version, newmod.i_version))
 
 def chk_namespace(oldmod, newmod, ctx):
     oldns = oldmod.search_one('namespace')
@@ -292,32 +376,360 @@ def get_latest_revision(m):
     else:
         return None
 
+def get_latest_revision_stmt(m):
+    revs = [r for r in m.search('revision')]
+    revs.sort(key=lambda r: r.arg)
+    if len(revs) > 0:
+        return revs[-1]
+    return None
+
+def get_revision_versions(m):
+    versions = []
+    for rev in m.search('revision'):
+        version = rev.search_one((ysvmod, 'version'))
+        if version is not None:
+            versions.append(version.arg)
+    return versions
+
+def has_nbc_changes(errors):
+    for epos, etag, eargs in errors:
+        if error.is_error(error.err_level(etag)):
+            return True
+    return False
+
+def has_possible_nbc_changes(errors):
+    for epos, etag, eargs in errors:
+        if error.is_warning(error.err_level(etag)):
+            return True
+    return False
+
+def has_major_possible_nbc_changes(errors):
+    for epos, etag, eargs in errors:
+        if etag in ('CHK_UNDECIDED_MUST',
+                    'CHK_UNDECIDED_WHEN',
+                    'CHK_UNDECIDED_PATTERN'):
+            return True
+    return False
+
+def suppress_possible_nbc_warnings(ctx, info):
+    warning_set = set()
+    for epos, etag, eargs in info['errors']:
+        if error.is_warning(error.err_level(etag)):
+            warning_set.add((epos.ref, epos.line, etag, eargs))
+    if not warning_set:
+        return
+    filtered = []
+    for epos, etag, eargs in ctx.errors:
+        key = (epos.ref, epos.line, etag, eargs)
+        if key in warning_set:
+            continue
+        filtered.append((epos, etag, eargs))
+    ctx.errors[:] = filtered
+
+def stmt_to_node_desc(stmt):
+    if stmt is None:
+        return None
+    if stmt.keyword in ('when', 'must', 'presence', 'pattern', 'description',
+                        'reference', 'default', 'mandatory', 'min-elements',
+                        'max-elements', 'revision-date'):
+        stmt = stmt.parent
+    if stmt is not None and stmt.keyword == 'type' and stmt.parent is not None:
+        stmt = stmt.parent
+    if stmt is None:
+        return None
+    module = getattr(stmt.i_module, 'arg', None)
+    if (stmt.keyword in statements.data_definition_keywords or
+        stmt.keyword in ('choice', 'case', 'input', 'output',
+                         'rpc', 'notification')):
+        parts = []
+        node = stmt
+        while node is not None and node.keyword not in ('module', 'submodule'):
+            if node.arg is not None:
+                parts.append(node.arg)
+            else:
+                parts.append(node.keyword)
+            node = node.parent
+        parts.reverse()
+        path = '/' + '/'.join(parts) if parts else ''
+        if module and path:
+            return "%s:%s" % (module, path)
+        if module:
+            return module
+        return path or None
+    if stmt.arg is None:
+        desc = stmt.keyword
+    else:
+        desc = "%s %s" % (stmt.keyword, stmt.arg)
+    if module:
+        return "%s:%s" % (module, desc)
+    return desc
+
+def find_stmt_by_line(stmt, line):
+    if stmt.pos is not None and stmt.pos.line == line:
+        return stmt
+    for child in getattr(stmt, 'substmts', []):
+        found = find_stmt_by_line(child, line)
+        if found is not None:
+            return found
+    return None
+
+def reason_for_error(etag, eargs):
+    if etag in ('CHK_DEF_ADDED', 'CHK_DEF_ADDED2'):
+        return "added %s %s" % (eargs[0], eargs[1])
+    if etag == 'CHK_IMPLICIT_DEFAULT':
+        return "changed implicit default"
+    if etag == 'CHK_DEF_REMOVED' and len(eargs) > 1:
+        return "removed %s %s" % (eargs[0], eargs[1])
+    if etag == 'CHK_DEF_CHANGED' and len(eargs) > 2:
+        return "changed %s %s (was %s)" % (eargs[0], eargs[1], eargs[2])
+    if etag == 'CHK_YANG_VERSION_CHANGED' and len(eargs) > 1:
+        return "changed YANG version from %s to %s" % (eargs[0], eargs[1])
+    if etag == 'CHK_CHILD_KEYWORD_CHANGED' and len(eargs) > 2:
+        return "changed %s to %s" % (eargs[0], eargs[2])
+    if etag == 'CHK_DATA_NODE_MOVED':
+        return "data node moved"
+    if etag == 'CHK_UNDECIDED_WHEN':
+        return "when changed"
+    if etag == 'CHK_UNDECIDED_MUST':
+        return "must changed"
+    if etag == 'CHK_UNDECIDED_PRESENCE':
+        return "presence changed"
+    if etag == 'CHK_UNDECIDED_PATTERN':
+        return "pattern changed"
+    if etag == 'CHK_UNDECIDED_DESCRIPTION':
+        return "the description change may have changed the semantics of the node"
+    if etag == 'CHK_DESCRIPTION_REMOVED':
+        return "description removed"
+    return etag
+
+def collect_nodes(errors, want_level, modules_by_ref):
+    nodes = []
+    for epos, etag, eargs in errors:
+        level = error.err_level(etag)
+        if want_level == 'error' and not error.is_error(level):
+            continue
+        if want_level == 'warning' and not error.is_warning(level):
+            continue
+        pos = epos
+        if etag == 'CHK_DEF_REMOVED' and len(eargs) > 2:
+            pos = eargs[2]
+        matches = []
+        for module in modules_by_ref.values():
+            matches.extend(find_effective_stmts(module, pos, set()))
+        if matches:
+            for desc in matches:
+                entry = "%s (%s)" % (desc, reason_for_error(etag, eargs))
+                if entry not in nodes:
+                    nodes.append(entry)
+            continue
+        stmt = getattr(pos, 'top', None)
+        desc = stmt_to_node_desc(stmt)
+        if (desc is None or desc.startswith('module ')) and pos.ref in modules_by_ref:
+            found = find_stmt_by_line(modules_by_ref[pos.ref], pos.line)
+            if found is not None:
+                desc = stmt_to_node_desc(found)
+        if etag == 'CHK_DEF_REMOVED' and len(eargs) > 1:
+            if desc is None or desc.startswith('module '):
+                desc = "%s %s" % (eargs[0], eargs[1])
+        if desc is not None:
+            reason = reason_for_error(etag, eargs)
+            entry = "%s (%s)" % (desc, reason)
+            if entry not in nodes:
+                nodes.append(entry)
+    return nodes
+
+def find_effective_stmts(stmt, pos, visited, node=None):
+    if stmt.keyword in statements.data_definition_keywords:
+        node = stmt
+    key = (id(stmt), id(node))
+    if key in visited:
+        return []
+    visited.add(key)
+    found = []
+    if stmt.pos.ref == pos.ref and stmt.pos.line == pos.line:
+        # Types are shared across uses expansions and keep their original
+        # parent. Report the effective data node rather than that parent.
+        found.append(stmt_to_node_desc(node if node is not None else stmt))
+    # Expanded children retain source positions, but have instantiated parents.
+    children = list(getattr(stmt, 'i_children', []))
+    children.extend(s for s in stmt.substmts
+                    if s.keyword not in statements.data_definition_keywords
+                    and s.keyword not in ('uses', 'refine'))
+    for child in children:
+        found.extend(find_effective_stmts(child, pos, visited, node))
+    return found
+
+def get_tree_output(ctx, mod):
+    buf = io.StringIO()
+    if not hasattr(ctx.opts, 'tree_no_expand_uses'):
+        ctx.opts.tree_no_expand_uses = False
+    if not hasattr(ctx.opts, 'modname_prefix'):
+        ctx.opts.modname_prefix = False
+    tree.emit_tree(ctx, [mod], buf, None, None, None)
+    return buf.getvalue()
+
+def has_schema_changes(info):
+    old_tree = get_tree_output(info['oldctx'], info['oldmod'])
+    new_tree = get_tree_output(info['newctx'], info['newmod'])
+    return old_tree != new_tree
+
+def has_non_schema_bc_changes(info):
+    return info.get('non_schema_bc_changes', False)
+
+def check_nbc_extension(ctx, info, nbc_changes):
+    if not nbc_changes:
+        return
+    newrev = info['newrev']
+    if newrev is None:
+        return
+    if newrev.search_one((revmod, 'non-backwards-compatible')) is None:
+        err_add(ctx.errors, newrev.pos, 'CHK_MISSING_NBC_EXTENSION', ())
+
+def report_semver(ctx, info, nbc_changes):
+    old_version = None
+    used_default_old_version = False
+    oldrev = info['oldrev']
+    if oldrev is not None:
+        version = oldrev.search_one((ysvmod, 'version'))
+        if version is not None:
+            old_version = version.arg
+    if old_version is None:
+        old_version = "1.0.0"
+        used_default_old_version = True
+
+    if nbc_changes or has_major_possible_nbc_changes(info['errors']):
+        change = 'nbc'
+    elif has_schema_changes(info) or has_non_schema_bc_changes(info):
+        change = 'bc'
+    else:
+        change = 'editorial'
+    known_versions = get_revision_versions(info['oldmod'])
+    recommendation, reason = yang_semver.recommend_version(
+        old_version, change, known_versions=known_versions)
+    if recommendation is None:
+        print("SUGGESTED-NEXT-YANG-SEMVER: unavailable (%s)" % reason)
+        return
+    check_declared_semver(ctx, info, old_version, recommendation,
+                          change, nbc_changes)
+    newrev = info['newrev']
+    if used_default_old_version:
+        print("ASSUMED-OLD-YANG-SEMVER: 1.0.0 (old revision missing ysv:version)")
+    print("SUGGESTED-NEXT-YANG-SEMVER: %s" % recommendation)
+    if nbc_changes:
+        if ctx.opts.check_update_nbc_verbose:
+            modules_by_ref = {
+                info['newmod'].pos.ref: info['newmod'],
+                info['oldmod'].pos.ref: info['oldmod'],
+            }
+            nodes = collect_nodes(info['errors'], 'error', modules_by_ref)
+            if len(nodes) > 0:
+                print("NBC: check_update reported non-backwards-compatible"
+                      " changes affecting %s." % ", ".join(nodes))
+        else:
+            print("NBC-CHANGE(S):")
+    elif has_possible_nbc_changes(info['errors']):
+        if ctx.opts.check_update_nbc_verbose:
+            modules_by_ref = {
+                info['newmod'].pos.ref: info['newmod'],
+                info['oldmod'].pos.ref: info['oldmod'],
+            }
+            nodes = collect_nodes(info['errors'], 'warning', modules_by_ref)
+            if len(nodes) > 0:
+                print("POSSIBLE-NBC-CHANGE(S): check_update reported warnings"
+                      " that may indicate non-backwards-compatible changes."
+                      " Affected nodes: %s." % ", ".join(nodes))
+        else:
+            print("POSSIBLE-NBC-CHANGE(S):")
+        print("Consult document authors and YANG Doctors.")
+
+def semver_change_class(old_version, new_version):
+    oldp = yang_semver.parse_version(old_version)
+    newp = yang_semver.parse_version(new_version)
+    if oldp is None or newp is None:
+        return None
+    cls = 'none'
+    if newp['major'] > oldp['major']:
+        cls = 'major'
+    elif newp['major'] == oldp['major'] and newp['minor'] > oldp['minor']:
+        cls = 'minor'
+    elif (newp['major'] == oldp['major'] and
+          newp['minor'] == oldp['minor'] and
+          newp['patch'] > oldp['patch']):
+        cls = 'patch'
+    # YANG Semver compatibility tags override numeric interpretation.
+    if newp['compat'] == 'non_compatible':
+        return 'major'
+    if newp['compat'] == 'compatible':
+        if cls in ('none', 'patch'):
+            return 'minor'
+    return cls
+
+def check_declared_semver(ctx, info, old_version, recommendation,
+                          change, nbc_changes):
+    newrev = info['newrev']
+    if newrev is None:
+        return
+    new_version_stmt = newrev.search_one((ysvmod, 'version'))
+    if new_version_stmt is None:
+        return
+    declared = new_version_stmt.arg
+    if declared == recommendation:
+        return
+    declared_class = semver_change_class(old_version, declared)
+    suggested_class = semver_change_class(old_version, recommendation)
+    if declared_class is None or suggested_class is None:
+        return
+    possible_nbc_changes = has_possible_nbc_changes(info['errors'])
+    if nbc_changes:
+        if declared_class != 'major':
+            err_add(ctx.errors, new_version_stmt.pos, 'CHK_BAD_SEMVER_NBC_BUMP',
+                    (declared, recommendation))
+        return
+    if declared_class == 'major' and not possible_nbc_changes:
+        err_add(ctx.errors, new_version_stmt.pos,
+                'CHK_BAD_SEMVER_MAJOR_WITHOUT_POSSIBLE_NBC',
+                (declared, recommendation))
+        return
+    if (possible_nbc_changes and declared_class == 'minor' and
+            suggested_class == 'patch'):
+        err_add(ctx.errors, new_version_stmt.pos,
+                'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC',
+                (declared, recommendation))
+
 def chk_feature(olds, newmod, ctx):
     chk_stmt_definitions(olds, newmod, ctx, newmod.i_features)
 
 def chk_identity(olds, newmod, ctx):
-    news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_identities)
+    news = None
+    if olds.arg in newmod.i_identities:
+        news = newmod.i_identities[olds.arg]
     if news is None:
+        if is_stmt_obsolete(olds):
+            mark_non_schema_bc_change(ctx)
+            return
+        err_def_removed(olds, newmod, ctx)
         return
+    chk_status(olds, news, ctx)
+    chk_if_feature(olds, news, ctx)
+    chk_description(olds, news, ctx)
     # make sure the base isn't changed (other than syntactically)
+    chk_reference(olds, news, ctx)
     oldbases = olds.search('base')
     newbases = news.search('base')
     if newmod.i_version == '1.1':
-        old_ids = [oldbase.i_identity.arg for oldbase in oldbases]
-        new_ids = [newbase.i_identity.arg for newbase in newbases]
+        old_ids = [(oldbase.i_identity.i_module.i_modulename,
+                    oldbase.i_identity.arg) for oldbase in oldbases]
+        new_ids = [(newbase.i_identity.i_module.i_modulename,
+                    newbase.i_identity.arg) for newbase in newbases]
         for old_id in set(old_ids) - set(new_ids):
             err_def_removed(oldbases[old_ids.index(old_id)], news, ctx)
-        for old_id in set(old_ids) & set(new_ids):
-            oldbase = oldbases[old_ids.index(old_id)]
-            newbase = newbases[new_ids.index(old_id)]
-            if oldbase.i_identity.i_module.i_modulename != \
-               newbase.i_identity.i_module.i_modulename:
-                err_def_changed(oldbase, newbase, ctx)
+        if len(set(new_ids) - set(old_ids)) > 0:
+            mark_non_schema_bc_change(ctx)
     else:
         oldbase = next(iter(oldbases), None)
         newbase = next(iter(newbases), None)
         if oldbase is None and newbase is not None:
-            err_def_added(newbase, ctx)
+            mark_non_schema_bc_change(ctx)
         elif newbase is None and oldbase is not None:
             err_def_removed(oldbase, news, ctx)
         elif oldbase is None and newbase is None:
@@ -327,17 +739,48 @@ def chk_identity(olds, newmod, ctx):
               or (oldbase.i_identity.arg != newbase.i_identity.arg)):
             err_def_changed(oldbase, newbase, ctx)
 
+def mark_non_schema_bc_change(ctx):
+    ctx.non_schema_bc_changes = True
+
+def is_stmt_obsolete(stmt):
+    if stmt is None:
+        return False
+    status = stmt.search_one('status')
+    return status is not None and status.arg == 'obsolete'
+
+def chk_identity_additions(oldmod, newmod, ctx):
+    old_ids = set([s.arg for s in oldmod.search('identity')])
+    for news in newmod.search('identity'):
+        if news.arg not in old_ids:
+            mark_non_schema_bc_change(ctx)
+
 def chk_typedef(olds, newmod, ctx):
     news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_typedefs)
     if news is None:
         return
+    chk_description(olds, news, ctx)
+    chk_units(olds, news, ctx)
+    chk_default(olds, news, ctx)
     chk_type(olds.search_one('type'), news.search_one('type'), ctx)
+
+def chk_typedef_additions(oldmod, newmod, ctx):
+    old_typedefs = set([s.arg for s in oldmod.search('typedef')])
+    for news in newmod.search('typedef'):
+        if news.arg not in old_typedefs:
+            mark_non_schema_bc_change(ctx)
 
 def chk_grouping(olds, newmod, ctx):
     news = chk_stmt_definitions(olds, newmod, ctx, newmod.i_groupings)
     if news is None:
         return
+    chk_description(olds, news, ctx)
     chk_i_children(olds, news, ctx)
+
+def chk_grouping_additions(oldmod, newmod, ctx):
+    old_groupings = set([s.arg for s in oldmod.search('grouping')])
+    for news in newmod.search('grouping'):
+        if news.arg not in old_groupings:
+            mark_non_schema_bc_change(ctx)
 
 def chk_rpc(olds, newmod, ctx):
     news = chk_stmt(olds, newmod, ctx)
@@ -378,6 +821,21 @@ def chk_extension(olds, newmod, ctx):
               newyin.arg != oldyin.arg):
             err_def_changed(oldyin, newyin, ctx)
 
+def extension_instance_specs(stmt, path=()):
+    specs = []
+    ignored = ((ysvmod, 'version'),
+               (revmod, 'non-backwards-compatible'))
+    for substmt in stmt.substmts:
+        subpath = path + ((substmt.keyword, substmt.arg),)
+        if isinstance(substmt.keyword, tuple) and \
+           substmt.keyword not in ignored:
+            specs.append(repr(subpath))
+        specs.extend(extension_instance_specs(substmt, subpath))
+    return sorted(specs)
+
+def chk_extension_instances(oldmod, newmod, ctx):
+    if extension_instance_specs(oldmod) != extension_instance_specs(newmod):
+        mark_non_schema_bc_change(ctx)
 
 def chk_augment(oldmod, newmod, ctx):
     # group augment of same target together, and compare with all
@@ -413,18 +871,23 @@ def chk_stmt_definitions(olds, newp, ctx, definitions):
         return None
     chk_status(olds, news, ctx)
     chk_if_feature(olds, news, ctx)
+    chk_reference(olds, news, ctx)
     return news
 
 def chk_stmt(olds, newp, ctx):
     news = newp.search_one(olds.keyword, arg = olds.arg)
     if news is None:
-        err_def_removed(olds, newp, ctx)
-        return None
+        oldstatus = olds.search_one('status')
+        if oldstatus is None or oldstatus.arg != 'obsolete':
+            err_def_removed(olds, newp, ctx)
+            return None
     chk_status(olds, news, ctx)
     chk_if_feature(olds, news, ctx)
+    chk_reference(olds, news, ctx)
     return news
 
 def chk_i_children(old, new, ctx):
+    chk_child_order(old, new, ctx)
     for oldch in old.i_children:
         chk_child(oldch, new, ctx)
 
@@ -433,6 +896,26 @@ def chk_i_children(old, new, ctx):
     for newch in added_new_children:
         if statements.is_mandatory_node(newch):
             err_add(ctx.errors, newch.pos, 'CHK_NEW_MANDATORY', newch.arg)
+
+def child_order_key(stmt):
+    module = getattr(stmt.i_module, 'i_modulename', stmt.i_module.arg)
+    return (module, stmt.keyword, stmt.arg)
+
+def chk_child_order(old, new, ctx):
+    old_children = [child for child in old.i_children
+                    if child.keyword in statements.data_definition_keywords]
+    new_children = [child for child in new.i_children
+                    if child.keyword in statements.data_definition_keywords]
+    old_keys = [child_order_key(child) for child in old_children]
+    new_keys = [child_order_key(child) for child in new_children]
+    old_common = [key for key in old_keys if key in new_keys]
+    new_common = [key for key in new_keys if key in old_keys]
+    for old_key, new_key in zip(old_common, new_common):
+        if old_key != new_key:
+            newch = new_children[new_keys.index(new_key)]
+            err_add(ctx.errors, newch.pos, 'CHK_DATA_NODE_MOVED',
+                    (newch.arg,))
+            return
 
 def chk_child(oldch, newp, ctx):
     chk_children(oldch, newp.i_children, newp, ctx)
@@ -444,7 +927,9 @@ def chk_children(oldch, newchs, newp, ctx):
             newch = ch
             break
     if newch is None:
-        err_def_removed(oldch, newp, ctx)
+        oldstatus = oldch.search_one('status')
+        if oldstatus is None or oldstatus.arg != 'obsolete':
+            err_def_removed(oldch, newp, ctx)
         return
 
     if newch.keyword != oldch.keyword:
@@ -453,6 +938,8 @@ def chk_children(oldch, newchs, newp, ctx):
         return
     chk_status(oldch, newch, ctx)
     chk_if_feature(oldch, newch, ctx)
+    chk_description(oldch, newch, ctx)
+    chk_reference(oldch, newch, ctx)
     chk_config(oldch, newch, ctx)
     chk_must(oldch, newch, ctx)
     chk_when(oldch, newch, ctx)
@@ -472,18 +959,29 @@ def chk_children(oldch, newchs, newp, ctx):
         chk_input_output(oldch, newch, ctx)
     elif newch.keyword == 'output':
         chk_input_output(oldch, newch, ctx)
+    elif newch.keyword in ('anyxml', 'anydata'):
+        chk_mandatory(oldch, newch, ctx)
 
 def chk_status(old, new, ctx):
     oldstatus = old.search_one('status')
     newstatus = new.search_one('status')
-    if oldstatus is None or oldstatus.arg == 'current':
-        # any new status is ok
+    if ((oldstatus is None or oldstatus.arg != 'obsolete') and
+        (newstatus and newstatus.arg == 'obsolete')):
+        # changing from any status other than obsolete to
+        # obsolete is a non-backwards-compatible change
+        # per draft-ietf-netmod-yang-module-versioning.
+        err_add(ctx.errors, new.pos, 'CHK_INVALID_STATUS',
+                (newstatus.arg,
+                 oldstatus.arg if oldstatus else "(implicit) current"))
+    elif oldstatus is None or oldstatus.arg == 'current':
+        # any other new status status is ok
         return
     if newstatus is None:
         err_add(ctx.errors, new.pos, 'CHK_INVALID_STATUS',
                 ("(implicit) current", oldstatus.arg))
     elif ((newstatus.arg == 'current') or
-          (oldstatus.arg == 'obsolete' and newstatus.arg != 'obsolete')):
+          (oldstatus and oldstatus.arg == 'obsolete' and
+           newstatus.arg != 'obsolete')):
         err_add(ctx.errors, newstatus.pos, 'CHK_INVALID_STATUS',
                 (newstatus.arg, oldstatus.arg))
 
@@ -547,31 +1045,77 @@ def chk_when(old, new, ctx):
 
 def chk_units(old, new, ctx):
     oldunits = old.search_one('units')
-    if oldunits is None:
-        return
     newunits = new.search_one('units')
+    if oldunits is None:
+        if newunits is not None:
+            mark_non_schema_bc_change(ctx)
+        return
     if newunits is None:
         err_def_removed(oldunits, new, ctx)
     elif newunits.arg != oldunits.arg:
         err_def_changed(oldunits, newunits, ctx)
 
+def effective_defaults(stmt):
+    defaults = stmt.search('default')
+    if defaults:
+        return [(s.arg, s) for s in defaults]
+    type_ = stmt.search_one('type')
+    typedef = getattr(type_, 'i_typedef', None)
+    if typedef is not None and getattr(typedef, 'i_default', None) is not None:
+        return [(typedef.i_default_str, None)]
+    return []
+
 def chk_default(old, new, ctx):
-    newdefault = new.search_one('default')
-    olddefault = old.search_one('default')
-    if olddefault is None and newdefault is None:
+    olddefaults = effective_defaults(old)
+    newdefaults = effective_defaults(new)
+    oldvalues = set(value for value, stmt in olddefaults)
+    newvalues = set(value for value, stmt in newdefaults)
+    if oldvalues == newvalues:
         return
-    if olddefault is not None and newdefault is None:
-        err_def_removed(olddefault, new, ctx)
-    elif olddefault is None and newdefault is not None:
-        # default added, check old implicit default
-        oldtype = old.search_one('type')
-        if (oldtype.i_typedef is not None and
-            hasattr(oldtype.i_typedef, 'i_default_str') and
-            oldtype.i_typedef.i_default is not None and
-            oldtype.i_typedef.i_default_str != newdefault.arg):
-            err_add(ctx.errors, newdefault.pos, 'CHK_IMPLICIT_DEFAULT', ())
-    elif olddefault.arg != newdefault.arg:
-        err_def_changed(olddefault, newdefault, ctx)
+    for value, stmt in olddefaults:
+        if value not in newvalues:
+            if stmt is None:
+                default = new.search_one('default')
+                pos = default.pos if default is not None else new.pos
+                err_add(ctx.errors, pos, 'CHK_IMPLICIT_DEFAULT', ())
+            elif not newdefaults or old.keyword == 'leaf-list':
+                err_def_removed(stmt, new, ctx)
+            else:
+                replacement = newdefaults[0][1]
+                if replacement is None:
+                    err_add(ctx.errors, new.pos, 'CHK_IMPLICIT_DEFAULT', ())
+                else:
+                    err_def_changed(stmt, replacement, ctx)
+    if newvalues - oldvalues:
+        mark_non_schema_bc_change(ctx)
+
+def chk_reference(old, new, ctx):
+    oldref = old.search_one('reference')
+    newref = new.search_one('reference')
+    if oldref is not None and newref is None:
+        err_def_removed(oldref, new, ctx)
+    elif newref is not None and (oldref is None or oldref.arg != newref.arg):
+        mark_non_schema_bc_change(ctx)
+
+def chk_dependencies(old, new, ctx):
+    for keyword in ('import', 'include'):
+        olddeps = old.search(keyword)
+        newdeps = new.search(keyword)
+        for olddep in olddeps:
+            newdep = new.search_one(keyword, olddep.arg)
+            if newdep is None:
+                err_def_removed(olddep, new, ctx)
+                continue
+            oldrev = olddep.search_one('revision-date')
+            newrev = newdep.search_one('revision-date')
+            if oldrev is None and newrev is not None:
+                err_def_added(newrev, ctx)
+            elif oldrev is not None and newrev is None:
+                err_def_removed(oldrev, newdep, ctx)
+            elif oldrev is not None and oldrev.arg != newrev.arg:
+                err_def_changed(oldrev, newrev, ctx)
+        if any(old.search_one(keyword, s.arg) is None for s in newdeps):
+            mark_non_schema_bc_change(ctx)
 
 def chk_mandatory(old, new, ctx):
     oldmandatory = old.search_one('mandatory')
@@ -583,28 +1127,32 @@ def chk_mandatory(old, new, ctx):
             err_def_changed(oldmandatory, newmandatory, ctx)
 
 def chk_min_max(old, new, ctx):
-    # RFC 7950: 'min-elements' defaults to 0 and 'max-elements' defaults to
-    # 'unbounded', so an absent statement is equivalent to that default.  Fold
-    # the defaults into the comparison so that e.g. an added 'max-elements
-    # unbounded' (which equals the default) is not flagged as a restriction.
+    # Absent min-elements is 0; absent max-elements is unbounded (RFC 7950).
     oldmin = old.search_one('min-elements')
     newmin = new.search_one('min-elements')
-    if newmin is None:
-        pass
-    elif oldmin is None:
-        if _min_elements_val(newmin.arg) > 0:
+    oldminval = 0 if oldmin is None else _min_elements_val(oldmin.arg)
+    newminval = 0 if newmin is None else _min_elements_val(newmin.arg)
+    if newminval > oldminval:
+        if oldmin is None:
             err_def_added(newmin, ctx)
-    elif _min_elements_val(newmin.arg) > _min_elements_val(oldmin.arg):
-        err_def_changed(oldmin, newmin, ctx)
+        else:
+            err_def_changed(oldmin, newmin, ctx)
+    elif newminval < oldminval:
+        mark_non_schema_bc_change(ctx)
+
     oldmax = old.search_one('max-elements')
     newmax = new.search_one('max-elements')
-    if newmax is None:
-        pass
-    elif oldmax is None:
-        if _max_elements_val(newmax.arg) < float('inf'):
+    oldmaxval = (float('inf') if oldmax is None
+                 else _max_elements_val(oldmax.arg))
+    newmaxval = (float('inf') if newmax is None
+                 else _max_elements_val(newmax.arg))
+    if newmaxval < oldmaxval:
+        if oldmax is None:
             err_def_added(newmax, ctx)
-    elif _max_elements_val(newmax.arg) < _max_elements_val(oldmax.arg):
-        err_def_changed(oldmax, newmax, ctx)
+        else:
+            err_def_changed(oldmax, newmax, ctx)
+    elif newmaxval > oldmaxval:
+        mark_non_schema_bc_change(ctx)
 
 def _min_elements_val(arg):
     # default for min-elements is 0 (RFC 7950 7.7.5)
@@ -689,6 +1237,7 @@ def chk_leaf(old, new, ctx):
 def chk_leaf_list(old, new, ctx):
     chk_type(old.search_one('type'), new.search_one('type'), ctx)
     chk_units(old, new, ctx)
+    chk_default(old, new, ctx)
     chk_min_max(old, new, ctx)
     chk_ordered_by(old, new, ctx)
 
@@ -704,6 +1253,7 @@ def chk_list(old, new, ctx):
     chk_ordered_by(old, new, ctx)
 
 def chk_choice(old, new, ctx):
+    chk_default(old, new, ctx)
     chk_mandatory(old, new, ctx)
     chk_i_children(old, new, ctx)
 
@@ -731,17 +1281,37 @@ def chk_type(old, new, ctx):
 def chk_integer(old, new, oldts, newts, ctx):
     chk_range(old, new, oldts, newts, ctx)
 
+def validate_intervals(type_spec, intervals, pos, module):
+    tmperrors = []
+    for lo, hi in intervals:
+        type_spec.validate(tmperrors, pos, (lo, hi), module, "")
+    return tmperrors
+
+def chk_interval_restriction(old, new, oldspec, newspec, intervals_attr,
+                             keyword, ctx):
+    old_intervals = getattr(oldspec, intervals_attr)
+    new_intervals = getattr(newspec, intervals_attr)
+    tmperrors = validate_intervals(newspec, old_intervals, new.pos,
+                                   new.i_module)
+    if tmperrors:
+        errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
+        err_add(ctx.errors, new.pos, errcode, keyword)
+        return
+    tmperrors = validate_intervals(oldspec, new_intervals, old.pos,
+                                   old.i_module)
+    if tmperrors:
+        mark_non_schema_bc_change(ctx)
+
 def chk_range(old, new, oldts, newts, ctx):
     ots = old.i_type_spec
     nts = new.i_type_spec
     if not isinstance(nts, types.RangeTypeSpec):
+        if isinstance(ots, types.RangeTypeSpec):
+            mark_non_schema_bc_change(ctx)
         return
     if isinstance(ots, types.RangeTypeSpec):
-        tmperrors = []
-        types.validate_ranges(tmperrors, new.pos, ots.ranges, new)
-        if tmperrors:
-            errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
-            err_add(ctx.errors, new.pos, errcode, 'range')
+        chk_interval_restriction(old, new, ots, nts, 'ranges',
+                                 'range', ctx)
     else:
         err_add(ctx.errors, nts.ranges_pos, 'CHK_DEF_ADDED',
                 ('range', str(nts.ranges)))
@@ -763,20 +1333,86 @@ def get_base_type(ts):
         return get_base_type(ts.base)
 
 def chk_string(old, new, oldts, newts, ctx):
-    # FIXME: see types.py; we can't check the length
-    return
+    chk_length(old, new, oldts, newts, ctx)
+    chk_pattern(old, new, ctx)
+
+def get_length_type_spec(type_spec):
+    type_spec = types.get_ancestor_typespec_skip_pattern(type_spec)
+    if isinstance(type_spec, types.LengthTypeSpec):
+        return type_spec
+    return None
+
+def chk_length(old, new, oldts, newts, ctx):
+    ots = get_length_type_spec(old.i_type_spec)
+    nts = get_length_type_spec(new.i_type_spec)
+    if nts is None:
+        if ots is not None:
+            mark_non_schema_bc_change(ctx)
+        return
+    if ots is not None:
+        chk_interval_restriction(old, new, ots, nts, 'lengths',
+                                 'length', ctx)
+    else:
+        err_add(ctx.errors, nts.length_pos, 'CHK_DEF_ADDED',
+                ('length', str(nts.lengths)))
+
+def chk_pattern(old, new, ctx):
+    old_patterns = old.search('pattern')
+    new_patterns = new.search('pattern')
+    if len(old_patterns) == 0 and len(new_patterns) == 0:
+        return
+    old_specs = [pattern_spec(p) for p in old_patterns]
+    new_specs = [pattern_spec(p) for p in new_patterns]
+    if old_specs == new_specs:
+        return
+    pos = new_patterns[0].pos if len(new_patterns) > 0 else new.pos
+    err_add(ctx.errors, pos, 'CHK_UNDECIDED_PATTERN', ())
+
+def pattern_spec(stmt):
+    modifier = stmt.search_one('modifier')
+    modifier_arg = modifier.arg if modifier is not None else None
+    return (stmt.arg, modifier_arg)
+
+def chk_description(old, new, ctx):
+    old_desc = old.search_one('description')
+    new_desc = new.search_one('description')
+    if old_desc is None and new_desc is None:
+        return
+    if old_desc is None:
+        err_add(ctx.errors, new_desc.pos, 'CHK_UNDECIDED_DESCRIPTION', ())
+        return
+    if new_desc is None:
+        err_add(ctx.errors, new.pos, 'CHK_DESCRIPTION_REMOVED', ())
+        return
+    if old_desc.arg != new_desc.arg:
+        err_add(ctx.errors, new_desc.pos, 'CHK_UNDECIDED_DESCRIPTION', ())
 
 def chk_enumeration(old, new, oldts, newts, ctx):
     # verify that all old enums are still in new, with the same values
     for name, val in oldts.enums:
+        old_enum_stmt = old.search_one('enum', arg=name)
+        new_enum_stmt = new.search_one('enum', arg=name)
         n = util.keysearch(name, 0, newts.enums)
         if n is None:
+            if is_stmt_obsolete(old_enum_stmt):
+                mark_non_schema_bc_change(ctx)
+                continue
+            pos = old_enum_stmt.pos if old_enum_stmt is not None else old.pos
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
-                    ('enum', name, old.pos))
+                    ('enum', name, pos))
         elif n[1] != val:
             errcode = verrcode('CHK_ENUM_VALUE_CHANGED', new)
             err_add(ctx.errors, new.pos, errcode,
                     (name, val, n[1]))
+        elif old_enum_stmt is not None and new_enum_stmt is not None:
+            chk_status(old_enum_stmt, new_enum_stmt, ctx)
+            chk_description(old_enum_stmt, new_enum_stmt, ctx)
+            chk_reference(old_enum_stmt, new_enum_stmt, ctx)
+    # newly added enum names are BC non-schema changes and should
+    # influence Semver recommendation.
+    for name, val in newts.enums:
+        if util.keysearch(name, 0, oldts.enums) is None:
+            mark_non_schema_bc_change(ctx)
 
 def chk_bits(old, new, oldts, newts, ctx):
     # verify that all old bits are still in new, with the same positions
@@ -789,10 +1425,14 @@ def chk_bits(old, new, oldts, newts, ctx):
             errcode = verrcode('CHK_BIT_POSITION_CHANGED', new)
             err_add(ctx.errors, new.pos, errcode,
                     (name, pos, n[1]))
+    # newly added bit names are BC non-schema changes and should
+    # influence Semver recommendation.
+    for name, pos in newts.bits:
+        if util.keysearch(name, 0, oldts.bits) is None:
+            mark_non_schema_bc_change(ctx)
 
 def chk_binary(old, new, oldts, newts, ctx):
-    # FIXME: see types.py; we can't check the length
-    return
+    chk_length(old, new, oldts, newts, ctx)
 
 def chk_leafref(old, new, oldts, newts, ctx):
     # verify that the path refers to the same leaf
@@ -814,16 +1454,18 @@ def chk_leafref(old, new, oldts, newts, ctx):
 
 def chk_identityref(old, new, oldts, newts, ctx):
     # verify that the bases are the same
-    extra = [n for n in newts.idbases]
-    for oidbase in oldts.idbases:
-        for nidbase in newts.idbases:
-            if (nidbase.i_module.i_modulename ==
-                    oidbase.i_module.i_modulename and
-                    nidbase.arg.split(':')[-1] == oidbase.arg.split(':')[-1]):
-                extra.remove(nidbase)
-    for n in extra:
+    old_ids = [(base.i_module.i_modulename, base.arg.split(':')[-1])
+               for base in oldts.idbases]
+    new_ids = [(base.i_module.i_modulename, base.arg.split(':')[-1])
+               for base in newts.idbases]
+    for n in newts.idbases:
+        key = (n.i_module.i_modulename, n.arg.split(':')[-1])
+        if key in old_ids:
+            continue
         err_add(ctx.errors, n.pos, 'CHK_DEF_ADDED',
                 ('base', n.arg))
+    if len(set(old_ids) - set(new_ids)) > 0:
+        mark_non_schema_bc_change(ctx)
 
 def chk_instance_identifier(old, new, oldts, newts, ctx):
     # FIXME:
