@@ -24,7 +24,6 @@ class IETFPlugin(lint.LintPlugin):
         self.found_8174 = False
         self.found_tlp = False
         self.mmap = {}
-        self.first_revision = True
 
         lint.LintPlugin.__init__(self)
         self.namespace_prefixes = ['urn:ietf:params:xml:ns:yang:']
@@ -55,10 +54,6 @@ class IETFPlugin(lint.LintPlugin):
         statements.add_validation_fun(
             'grammar', ['description'],
             lambda ctx, s: self.v_chk_description(ctx, s))
-
-        statements.add_validation_fun(
-            'grammar', ['revision'],
-            lambda ctx, s: self.v_chk_revision(ctx, s))
 
         # register our error codes
         error.add_error_code(
@@ -129,15 +124,6 @@ class IETFPlugin(lint.LintPlugin):
                 self.mmap[s.i_module.arg]['found_2119_keywords'] = True
                 self.mmap[s.i_module.arg]['description_pos'] = s.pos
 
-    def v_chk_revision(self, ctx, s):
-        if not self.first_revision:
-            return
-        if s.search_one(('ietf-yang-semver', 'version')) is None:
-            err_add(ctx.errors, s.pos,
-                    'IETF_MISSING_YANG_SEMVER', ())
-
-        self.first_revision = False
-
     def post_validate_ctx(self, ctx, modules):
         if not ctx.opts.ietf:
             return
@@ -146,7 +132,17 @@ class IETFPlugin(lint.LintPlugin):
                 and not self.mmap[mod.arg]['found_8174']):
                 pos = self.mmap[mod.arg]['description_pos']
                 err_add(ctx.errors, pos, 'IETF_MISSING_RFC8174', ())
+            self._chk_semver(ctx, mod)
             self._chk_nbc_extension(ctx, mod)
+
+    def _chk_semver(self, ctx, mod):
+        revs = mod.search('revision')
+        if not revs:
+            return
+        latest = max(revs, key=lambda r: r.arg)
+        if latest.search_one((yang_semver.yang_semver_module_name,
+                              'version')) is None:
+            err_add(ctx.errors, latest.pos, 'IETF_MISSING_YANG_SEMVER', ())
 
     def _chk_nbc_extension(self, ctx, mod):
         revs = [r for r in mod.search('revision')]

@@ -1,6 +1,7 @@
 PYANG := env YANG_INSTALL=/tmp $(PYANG) --ietf --print-error-code
 
 test:
+	python test_multiple_modules.py
 	@echo "missing-semver... " | tr -d '\012';			\
 	$(PYANG) ietf-missing-semver.yang 2> missing-semver.err;	\
 	diff expect/missing-semver.err missing-semver.err > missing-semver.diff || \
