@@ -56,6 +56,59 @@ class EffectiveUpdateTest(unittest.TestCase):
                              result.stdout + result.stderr)
             return result
 
+    def test_interval_restrictions(self):
+        for type_, keyword in (('uint8', 'range'), ('string', 'length'),
+                               ('binary', 'length')):
+            for old, new, version in (
+                    ('min..10', '5..10', '2.0.0'),
+                    ('5..10', 'min..10', '1.1.0'),
+                    ('5..max', '5..10', '2.0.0'),
+                    ('5..10', '5..max', '1.1.0'),
+                    ('min..max', '5..10', '2.0.0'),
+                    ('5..10', 'min..max', '1.1.0'),
+                    ('1..10', '1..5 | 6..10', '1.0.1'),
+                    ('1..5 | 6..10', '1..10', '1.0.1'),
+                    ('1..10', '1..5 | 7..10', '2.0.0'),
+                    ('1..5 | 7..10', '1..10', '1.1.0'),
+                    ('1 | 2 | 3', '1..3', '1.0.1'),
+                    ('1..10', '5', '2.0.0'),
+                    ('', 'min..max', '1.0.1'),
+                    ('min..max', '', '1.0.1'),
+                    ('max', 'max', '1.0.1')):
+                with self.subTest(type=type_, old=old, new=new):
+                    oldstmt = '%s "%s";' % (keyword, old) if old else ''
+                    newstmt = '%s "%s";' % (keyword, new) if new else ''
+                    result = self.compare(
+                        'leaf x { type %s { %s } }' % (type_, oldstmt),
+                        'leaf x { type %s { %s } }' % (type_, newstmt), version)
+                    if version == '2.0.0':
+                        self.assertIn('CHK_RESTRICTION_CHANGED_v1.1',
+                                      result.stderr)
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION', result.stderr)
+
+    def test_inherited_interval_bounds(self):
+        for type_, keyword in (('uint8', 'range'), ('string', 'length')):
+            definition = 'typedef t { type %s { %s "5..10"; } } ' % (
+                type_, keyword)
+            old = definition + 'leaf x { type t { %s "min..max"; } }' % keyword
+            new = definition + 'leaf x { type t { %s "6..10"; } }' % keyword
+            self.compare(old, new, '2.0.0')
+            self.compare(new, old, '1.1.0')
+            self.compare(old, definition + 'leaf x { type t; }', '1.0.1')
+
+    def test_decimal_interval_restrictions(self):
+        for old, new, version in (
+                ('min..10.00', '5.00..10.00', '2.0.0'),
+                ('5.00..max', '5.00..10.00', '2.0.0'),
+                ('5.00..10.00', 'min..max', '1.1.0'),
+                ('1.00..1.10', '1.00..1.05 | 1.06..1.10', '1.0.1'),
+                ('-1.10..-1.00', '-1.10..-1.05 | -1.04..-1.00', '1.0.1'),
+                ('1.00..1.10', '1.00..1.05 | 1.07..1.10', '2.0.0')):
+            with self.subTest(old=old, new=new):
+                definition = 'leaf x { type decimal64 { fraction-digits 2; '
+                self.compare(definition + 'range "%s"; } }' % old,
+                             definition + 'range "%s"; } }' % new, version)
+
     def test_defaults(self):
         for keyword in ('leaf', 'leaf-list'):
             for old, new, version in (('', 'default a;', '1.1.0'),

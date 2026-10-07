@@ -1281,40 +1281,72 @@ def chk_type(old, new, ctx):
 def chk_integer(old, new, oldts, newts, ctx):
     chk_range(old, new, oldts, newts, ctx)
 
-def validate_intervals(type_spec, intervals, pos, module):
-    tmperrors = []
+def restriction_value(value):
+    if isinstance(value, types.Decimal64Value):
+        return value.value
+    return value
+
+def restriction_bound(value, minimum, maximum):
+    if value == 'min':
+        return minimum
+    if value == 'max':
+        return maximum
+    return restriction_value(value)
+
+def restriction_intervals(type_spec, intervals_attr):
+    if intervals_attr == 'lengths':
+        type_spec = types.get_ancestor_typespec_skip_pattern(type_spec)
+    intervals = getattr(type_spec, intervals_attr, None)
+    if intervals is None:
+        return [(restriction_value(type_spec.min),
+                 restriction_value(type_spec.max))]
+    base_intervals = restriction_intervals(type_spec.base, intervals_attr)
+    if not intervals:
+        return base_intervals
+    minimum = base_intervals[0][0]
+    maximum = base_intervals[-1][1]
+    normalized = []
     for lo, hi in intervals:
-        type_spec.validate(tmperrors, pos, (lo, hi), module, "")
-    return tmperrors
+        lo = restriction_bound(lo, minimum, maximum)
+        hi = lo if hi is None else restriction_bound(hi, minimum, maximum)
+        # Integers and lengths are discrete; decimal64 values are represented
+        # as exact scaled integers, so adjacent values differ by one here too.
+        if normalized and lo <= normalized[-1][1] + 1:
+            normalized[-1] = (normalized[-1][0],
+                              max(normalized[-1][1], hi))
+        else:
+            normalized.append((lo, hi))
+    return normalized
+
+def intervals_are_subset(intervals, other):
+    index = 0
+    for lo, hi in intervals:
+        while index < len(other) and other[index][1] < lo:
+            index += 1
+        if (index == len(other) or other[index][0] > lo or
+            other[index][1] < hi):
+            return False
+    return True
 
 def chk_interval_restriction(old, new, oldspec, newspec, intervals_attr,
                              keyword, ctx):
-    old_intervals = getattr(oldspec, intervals_attr)
-    new_intervals = getattr(newspec, intervals_attr)
-    tmperrors = validate_intervals(newspec, old_intervals, new.pos,
-                                   new.i_module)
-    if tmperrors:
-        errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
-        err_add(ctx.errors, new.pos, errcode, keyword)
+    old_intervals = restriction_intervals(oldspec, intervals_attr)
+    new_intervals = restriction_intervals(newspec, intervals_attr)
+    if not intervals_are_subset(old_intervals, new_intervals):
+        if getattr(oldspec, intervals_attr, None) is None:
+            pos_attr = 'ranges_pos' if keyword == 'range' else 'length_pos'
+            pos = getattr(newspec, pos_attr)
+            err_add(ctx.errors, pos, 'CHK_DEF_ADDED',
+                    (keyword, str(getattr(newspec, intervals_attr))))
+        else:
+            errcode = verrcode('CHK_RESTRICTION_CHANGED', new)
+            err_add(ctx.errors, new.pos, errcode, keyword)
         return
-    tmperrors = validate_intervals(oldspec, new_intervals, old.pos,
-                                   old.i_module)
-    if tmperrors:
+    if not intervals_are_subset(new_intervals, old_intervals):
         mark_non_schema_bc_change(ctx)
 
 def chk_range(old, new, oldts, newts, ctx):
-    ots = old.i_type_spec
-    nts = new.i_type_spec
-    if not isinstance(nts, types.RangeTypeSpec):
-        if isinstance(ots, types.RangeTypeSpec):
-            mark_non_schema_bc_change(ctx)
-        return
-    if isinstance(ots, types.RangeTypeSpec):
-        chk_interval_restriction(old, new, ots, nts, 'ranges',
-                                 'range', ctx)
-    else:
-        err_add(ctx.errors, nts.ranges_pos, 'CHK_DEF_ADDED',
-                ('range', str(nts.ranges)))
+    chk_interval_restriction(old, new, oldts, newts, 'ranges', 'range', ctx)
 
 def chk_decimal64(old, new, oldts, newts, ctx):
     oldbasets = get_base_type(oldts)
@@ -1336,25 +1368,10 @@ def chk_string(old, new, oldts, newts, ctx):
     chk_length(old, new, oldts, newts, ctx)
     chk_pattern(old, new, ctx)
 
-def get_length_type_spec(type_spec):
-    type_spec = types.get_ancestor_typespec_skip_pattern(type_spec)
-    if isinstance(type_spec, types.LengthTypeSpec):
-        return type_spec
-    return None
-
 def chk_length(old, new, oldts, newts, ctx):
-    ots = get_length_type_spec(old.i_type_spec)
-    nts = get_length_type_spec(new.i_type_spec)
-    if nts is None:
-        if ots is not None:
-            mark_non_schema_bc_change(ctx)
-        return
-    if ots is not None:
-        chk_interval_restriction(old, new, ots, nts, 'lengths',
-                                 'length', ctx)
-    else:
-        err_add(ctx.errors, nts.length_pos, 'CHK_DEF_ADDED',
-                ('length', str(nts.lengths)))
+    ots = types.get_ancestor_typespec_skip_pattern(oldts)
+    nts = types.get_ancestor_typespec_skip_pattern(newts)
+    chk_interval_restriction(old, new, ots, nts, 'lengths', 'length', ctx)
 
 def chk_pattern(old, new, ctx):
     old_patterns = old.search('pattern')
