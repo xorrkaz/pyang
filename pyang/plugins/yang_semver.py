@@ -53,7 +53,13 @@ def recommend_version(old_version, change, known_versions=None):
         return None, "pre-release MAJOR version"
     if parsed['pre_release'] is not None or parsed['build'] is not None:
         return None, "pre-release metadata present"
-    known_versions = set(known_versions or [])
+    used_versions = {}
+    for version in known_versions or []:
+        known = parse_version(version)
+        if known is None or known['pre_release'] is not None:
+            continue
+        numbers = (known['major'], known['minor'], known['patch'])
+        used_versions.setdefault(numbers, set()).add(known['compat'])
 
     major = parsed['major']
     minor = parsed['minor']
@@ -61,20 +67,26 @@ def recommend_version(old_version, change, known_versions=None):
     compat = parsed['compat']
 
     if change == 'nbc':
-        candidate = format_version(major + 1, 0, 0)
-        if candidate in known_versions:
-            return format_version(major, minor, patch + 1, 'non_compatible'), None
-        return candidate, None
-    if change == 'bc':
+        if (major + 1, 0, 0) not in used_versions:
+            return format_version(major + 1, 0, 0), None
+        compat = 'non_compatible'
+    elif change == 'bc':
         if compat is None:
-            candidate = format_version(major, minor + 1, 0)
-            if candidate in known_versions:
-                return format_version(major, minor, patch + 1, 'compatible'), None
-            return candidate, None
-        return format_version(major, minor, patch + 1, compat), None
-    if change == 'editorial':
-        return format_version(major, minor, patch + 1, compat), None
-    return None, "unknown change type"
+            if (major, minor + 1, 0) not in used_versions:
+                return format_version(major, minor + 1, 0), None
+            compat = 'compatible'
+    elif change != 'editorial':
+        return None, "unknown change type"
+
+    # Skipped patch versions must not cause a sticky modifier to be lost.
+    while (major, minor, patch + 1) in used_versions:
+        modifiers = used_versions[(major, minor, patch + 1)]
+        if 'non_compatible' in modifiers:
+            compat = 'non_compatible'
+        elif compat is None and 'compatible' in modifiers:
+            compat = 'compatible'
+        patch += 1
+    return format_version(major, minor, patch + 1, compat), None
 
 def pyang_plugin_init():
     """Called by pyang plugin framework at to initialize the plugin."""

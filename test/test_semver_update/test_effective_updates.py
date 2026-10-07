@@ -56,7 +56,8 @@ class EffectiveUpdateTest(unittest.TestCase):
                  '--check-update-nbc-verbose', paths[1]],
                 env=env, capture_output=True, text=True, check=False)
             self.assertIn('SUGGESTED-NEXT-YANG-SEMVER: ' + version,
-                          result.stdout, result.stdout + result.stderr)
+                          result.stdout.splitlines(),
+                          result.stdout + result.stderr)
             self.assertNotIn('error: BAD', result.stderr)
             for line in result.stderr.splitlines():
                 if ': error: ' in line:
@@ -199,6 +200,52 @@ class EffectiveUpdateTest(unittest.TestCase):
         result = self.compare(definitions + 'leaf x { type a; }',
                               definitions + 'leaf x { type b; }', '1.1.0')
         self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
+
+    def test_semver_version_collisions(self):
+        cases = []
+        for change, candidate, fallback in (
+                ('nbc', '2.0.0', '1.2.4_non_compatible'),
+                ('bc', '1.3.0', '1.2.4_compatible')):
+            for suffix in ('', '_compatible', '_non_compatible', '+build'):
+                cases.append(('1.2.3', change, [candidate + suffix], fallback))
+            cases.append(('1.2.3', change, [candidate + '-alpha'], candidate))
+            cases.append(('1.2.3', change,
+                          [candidate, '1.2.4', '1.2.5_compatible+build'],
+                          '1.2.6_' + fallback.split('_', 1)[1]))
+        cases.extend([
+            ('1.2.3', 'nbc',
+             ['2.0.0_compatible', '1.2.4_compatible', '1.2.5_non_compatible'],
+             '1.2.6_non_compatible'),
+            ('1.2.3', 'bc', ['1.3.0', '1.2.4_non_compatible'],
+             '1.2.5_non_compatible'),
+            ('1.2.3', 'editorial', ['1.2.4'], '1.2.5'),
+            ('1.2.3', 'editorial', ['1.2.4_compatible'], '1.2.5_compatible'),
+            ('1.2.3', 'editorial', ['1.2.4_non_compatible'],
+             '1.2.5_non_compatible'),
+            ('1.2.3', 'editorial', ['1.2.4+build'], '1.2.5'),
+            ('1.2.3', 'editorial', ['1.2.4-alpha'], '1.2.4'),
+            ('1.2.3_compatible', 'bc', ['1.2.4_compatible'],
+             '1.2.5_compatible'),
+            ('1.2.3_compatible', 'editorial', ['1.2.4_non_compatible'],
+             '1.2.5_non_compatible'),
+            ('1.2.3_non_compatible', 'bc', ['1.2.4_non_compatible+build'],
+             '1.2.5_non_compatible'),
+            ('1.2.3_non_compatible', 'editorial', ['1.2.4_non_compatible'],
+             '1.2.5_non_compatible')])
+        for old_version, change, known_versions, suggested in cases:
+            with self.subTest(old=old_version, change=change,
+                              known_versions=known_versions):
+                history = '@REV@ ' + ''.join(
+                    'revision 1999-12-%02d { ysv:version "%s"; } ' %
+                    (28 - index, version)
+                    for index, version in enumerate(known_versions))
+                old = history + 'leaf x { type string; }'
+                new = old
+                if change == 'nbc':
+                    new = old.replace('type string', 'type uint32')
+                elif change == 'bc':
+                    new += 'leaf y { type string; }'
+                self.compare(old, new, suggested, old_version=old_version)
 
     def test_sticky_semver_modifiers(self):
         for modifier in ('compatible', 'non_compatible'):
