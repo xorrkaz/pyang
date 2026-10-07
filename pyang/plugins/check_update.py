@@ -435,7 +435,8 @@ def stmt_to_node_desc(stmt):
     if stmt is None:
         return None
     if stmt.keyword in ('when', 'must', 'presence', 'pattern', 'description',
-                        'reference', 'default', 'mandatory', 'min-elements',
+                        'reference', 'status', 'default', 'mandatory',
+                        'min-elements',
                         'max-elements', 'revision-date'):
         stmt = stmt.parent
     if stmt is not None and stmt.keyword == 'type' and stmt.parent is not None:
@@ -1459,17 +1460,53 @@ def chk_enumeration(old, new, oldts, newts, ctx):
         if util.keysearch(name, 0, oldts.enums) is None:
             mark_non_schema_bc_change(ctx)
 
+def find_bit_stmt(stmt, name):
+    while stmt is not None:
+        bit = stmt.search_one('bit', arg=name)
+        if bit is not None:
+            return bit
+        typedef = getattr(stmt, 'i_typedef', None)
+        stmt = typedef.search_one('type') if typedef is not None else None
+    return None
+
 def chk_bits(old, new, oldts, newts, ctx):
     # verify that all old bits are still in new, with the same positions
     for name, pos in oldts.bits:
+        old_bit_stmt = find_bit_stmt(old, name)
+        new_bit_stmt = find_bit_stmt(new, name)
         n = util.keysearch(name, 0, newts.bits)
         if n is None:
+            if is_stmt_obsolete(old_bit_stmt):
+                mark_non_schema_bc_change(ctx)
+                continue
+            oldpos = old_bit_stmt.pos if old_bit_stmt is not None else old.pos
+            if old.search_one('bit', name) is None:
+                oldpos = old.pos
             err_add(ctx.errors, new.pos, 'CHK_DEF_REMOVED',
-                    ('bit', name, old.pos))
+                    ('bit', name, oldpos))
         elif n[1] != pos:
             errcode = verrcode('CHK_BIT_POSITION_CHANGED', new)
             err_add(ctx.errors, new.pos, errcode,
                     (name, pos, n[1]))
+        elif old_bit_stmt is not None and new_bit_stmt is not None:
+            bit_ctx = copy.copy(ctx)
+            bit_ctx.errors = []
+            chk_status(old_bit_stmt, new_bit_stmt, bit_ctx)
+            chk_if_feature(old_bit_stmt, new_bit_stmt, bit_ctx)
+            chk_description(old_bit_stmt, new_bit_stmt, bit_ctx)
+            chk_reference(old_bit_stmt, new_bit_stmt, bit_ctx)
+            if bit_ctx.non_schema_bc_changes:
+                mark_non_schema_bc_change(ctx)
+            for epos, etag, eargs in bit_ctx.errors:
+                # Inherited metadata affects this use of the type.
+                if new.search_one('bit', name) is None:
+                    epos = new.pos
+                    if etag == 'CHK_DEF_REMOVED':
+                        eargs = eargs[:2] + (old.pos,)
+                err_add(ctx.errors, epos, etag, eargs)
+            if any(new_bit_stmt.search_one('if-feature', s.arg) is None
+                   for s in old_bit_stmt.search('if-feature')):
+                mark_non_schema_bc_change(ctx)
     # newly added bit names are BC non-schema changes and should
     # influence Semver recommendation.
     for name, pos in newts.bits:

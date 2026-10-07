@@ -202,6 +202,129 @@ class EffectiveUpdateTest(unittest.TestCase):
                               definitions + 'leaf x { type b; }', '1.1.0')
         self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
 
+    def test_bit_metadata(self):
+        for wrapper, paths in (
+                ('leaf flags { type bits { %s } }', ('/flags',)),
+                ('leaf-list flags { type bits { %s } }', ('/flags',)),
+                ('typedef flags { type bits { %s } }', ('bit a',)),
+                ('grouping g { leaf flags { type bits { %s } } } '
+                 'container one { uses g; } container two { uses g; }',
+                 ('/one/flags', '/two/flags'))):
+            for old, new, version, diagnostic in (
+                    ('', 'status obsolete;', '2.0.0', 'CHK_INVALID_STATUS'),
+                    ('status deprecated;', 'status obsolete;', '2.0.0',
+                     'CHK_INVALID_STATUS'),
+                    ('status deprecated;', 'status current;', '2.0.0',
+                     'CHK_INVALID_STATUS'),
+                    ('', 'status deprecated;', '1.0.1', None),
+                    ('description old;', 'description new;', '1.0.1',
+                     'CHK_UNDECIDED_DESCRIPTION'),
+                    ('description old;', '', '2.0.0',
+                     'CHK_DESCRIPTION_REMOVED'),
+                    ('', 'reference added;', '1.1.0', None),
+                    ('reference old;', 'reference new;', '1.1.0', None),
+                    ('reference old;', '', '2.0.0', 'CHK_DEF_REMOVED'),
+                    ('status obsolete;', 'status obsolete;', '1.0.1', None)):
+                with self.subTest(wrapper=wrapper, old=old, new=new):
+                    bits = 'bit a { position 1; %s } bit keep { position 9; }'
+                    result = self.compare(wrapper % (bits % old),
+                                          wrapper % (bits % new), version)
+                    if diagnostic is not None:
+                        self.assertIn(diagnostic, result.stderr)
+                        for path in paths:
+                            self.assertIn(path, result.stdout)
+                        if diagnostic == 'CHK_UNDECIDED_DESCRIPTION':
+                            self.assertIn('description', result.stdout)
+                            self.assertNotIn('CHK_MISSING_NBC_EXTENSION',
+                                             result.stderr)
+                        else:
+                            self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                          result.stderr)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+
+    def test_bit_membership(self):
+        for wrapper in ('leaf flags { type bits { %s } }',
+                        'typedef flags { type bits { %s } }'):
+            for old, new, version, diagnostic in (
+                    ('bit a { position 1; }', '', '2.0.0', 'CHK_DEF_REMOVED'),
+                    ('bit a { position 1; status deprecated; }', '', '2.0.0',
+                     'CHK_DEF_REMOVED'),
+                    ('bit a { position 1; status obsolete; }', '', '1.1.0',
+                     None),
+                    ('bit a { position 1; }', 'bit a { position 2; }',
+                     '2.0.0', 'CHK_BIT_POSITION_CHANGED'),
+                    ('', 'bit a { position 1; }', '1.1.0', None)):
+                with self.subTest(wrapper=wrapper, old=old, new=new):
+                    keep = 'bit keep { position 9; }'
+                    result = self.compare(wrapper % (old + keep),
+                                          wrapper % (new + keep), version)
+                    if diagnostic is not None:
+                        self.assertIn(diagnostic, result.stderr)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+
+    def test_inherited_bit_metadata(self):
+        for old, new, version, diagnostic in (
+                ('bit a { position 1; }',
+                 'bit a { position 1; status obsolete; }', '2.0.0',
+                 'CHK_INVALID_STATUS'),
+                ('bit a { position 1; description old; }',
+                 'bit a { position 1; description new; }', '1.1.0',
+                 'CHK_UNDECIDED_DESCRIPTION'),
+                ('bit a { position 1; reference old; }',
+                 'bit a { position 1; reference new; }', '1.1.0', None),
+                ('bit a { position 1; reference old; }',
+                 'bit a { position 1; }', '2.0.0', 'CHK_DEF_REMOVED'),
+                ('bit a { position 1; status obsolete; }', '', '1.1.0', None)):
+            with self.subTest(old=old, new=new):
+                definitions = (
+                    'typedef a { type bits { %s bit keep { position 9; } } } '
+                    'typedef b { type bits { %s bit keep { position 9; } } } '
+                    'typedef mid-a { type a; } typedef mid-b { type b; } ' %
+                    (old, new))
+                result = self.compare(
+                    definitions + 'leaf flags { type mid-a; }',
+                    definitions + 'leaf flags { type mid-b; }', version)
+                if diagnostic is not None:
+                    self.assertIn(diagnostic, result.stderr)
+                    self.assertIn('/flags', result.stdout)
+                else:
+                    self.assertNotIn('CHK_', result.stderr)
+
+    def test_imported_bit_metadata(self):
+        extra = {'dep.yang':
+                 'module dep { yang-version 1.1; namespace urn:dep; prefix d; '
+                 'typedef a { type bits { bit one { description old; } } } '
+                 'typedef b { type bits { bit one { description new; } } } }'}
+        old = ('import dep { prefix d; } @REV@ '
+               'grouping g { leaf flags { type d:a; } } '
+               'container one { uses g; } container two { uses g; }')
+        result = self.compare(old, old.replace('type d:a', 'type d:b'),
+                              '1.1.0', extra=extra)
+        self.assertIn('CHK_UNDECIDED_DESCRIPTION', result.stderr)
+        self.assertIn('/one/flags', result.stdout)
+        self.assertIn('/two/flags', result.stdout)
+        self.assertIn('description', result.stdout)
+
+    def test_bit_features(self):
+        for old, new, version, diagnostic in (
+                ('', 'if-feature f;', '2.0.0', 'CHK_DEF_ADDED2'),
+                ('if-feature f;', '', '1.1.0', None),
+                ('if-feature f;', 'if-feature g;', '2.0.0', 'CHK_DEF_ADDED2')):
+            with self.subTest(old=old, new=new):
+                definition = ('feature f; feature g; leaf flags { type bits { '
+                              'bit a { position 1; %s } '
+                              'bit keep { position 9; } } }')
+                result = self.compare(definition % old, definition % new,
+                                      version)
+                if diagnostic is not None:
+                    self.assertIn(diagnostic, result.stderr)
+                    self.assertIn('/flags', result.stdout)
+                    self.assertIn('if-feature', result.stdout)
+                else:
+                    self.assertNotIn('CHK_', result.stderr)
+
     def test_semver_tree_display_options(self):
         used = ('grouping g { leaf x { type string; } %s } '
                 'container cont { uses g; }')
