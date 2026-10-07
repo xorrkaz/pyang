@@ -190,6 +190,86 @@ class EffectiveUpdateTest(unittest.TestCase):
                               definitions + 'leaf x { type b; }', '1.1.0')
         self.assertNotIn('CHK_UNDECIDED_PATTERN', result.stderr)
 
+    def test_action_parameters(self):
+        for direction in ('input', 'output'):
+            for old, new, version, diagnostic, reason in (
+                    ('leaf x { type string; }', '', '2.0.0',
+                     'CHK_DEF_REMOVED', 'removed'),
+                    ('', 'leaf x { type string; }', '1.1.0', None, None),
+                    ('', 'leaf x { type string; mandatory true; }', '2.0.0',
+                     'CHK_NEW_MANDATORY', 'CHK_NEW_MANDATORY'),
+                    ('leaf x { type string; }', 'leaf x { type uint32; }',
+                     '2.0.0', 'CHK_BASE_TYPE_CHANGED', 'CHK_BASE_TYPE_CHANGED'),
+                    ('leaf x { type uint8 { range "1..10"; } }',
+                     'leaf x { type uint8 { range "5..10"; } }',
+                     '2.0.0', 'CHK_RESTRICTION_CHANGED',
+                     'CHK_RESTRICTION_CHANGED'),
+                    ('leaf x { type string; description old; }',
+                     'leaf x { type string; description new; }',
+                     '1.0.1', 'CHK_UNDECIDED_DESCRIPTION', 'description'),
+                    ('leaf x { type string { pattern "a.*"; } }',
+                     'leaf x { type string { pattern "b.*"; } }',
+                     '2.0.0', 'CHK_UNDECIDED_PATTERN', 'pattern changed'),
+                    ('leaf x { type string; }', 'leaf x { type string; }',
+                     '1.0.1', None, None)):
+                with self.subTest(direction=direction, old=old, new=new):
+                    wrapper = ('container cont { action run { %s { %%s '
+                               'leaf keep { type string; } } } }' % direction)
+                    result = self.compare(wrapper % old, wrapper % new,
+                                          version)
+                    if diagnostic is not None:
+                        self.assertIn(diagnostic, result.stderr)
+                        self.assertIn('probe:/cont/run/%s/x' % direction,
+                                      result.stdout)
+                        self.assertIn(reason, result.stdout)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+                    if diagnostic in ('CHK_UNDECIDED_DESCRIPTION',
+                                      'CHK_UNDECIDED_PATTERN'):
+                        self.assertIn('POSSIBLE-NBC-CHANGE(S):',
+                                      result.stdout)
+                        self.assertNotIn('CHK_MISSING_NBC_EXTENSION',
+                                         result.stderr)
+                    elif version == '2.0.0':
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                      result.stderr)
+
+    def test_action_parameter_instances(self):
+        for direction in ('input', 'output'):
+            for wrapper, paths in (
+                    ('list cont { key id; leaf id { type string; } %s }',
+                     ('/cont/run',)),
+                    ('grouping g { %s } container one { uses g; } '
+                     'container two { uses g; }',
+                     ('/one/run', '/two/run')),
+                    ('container cont; augment /cont { %s }',
+                     ('/cont/run',))):
+                with self.subTest(direction=direction, wrapper=wrapper):
+                    old = wrapper % ('action run { %s { '
+                                     'container params { '
+                                     'leaf x { type string; } '
+                                     'leaf keep { type string; } } } }' %
+                                     direction)
+                    result = self.compare(
+                        old, old.replace('leaf x { type string; }', ''),
+                        '2.0.0')
+                    self.assertIn('CHK_DEF_REMOVED', result.stderr)
+                    for path in paths:
+                        self.assertIn('probe:%s/%s/params/x' %
+                                      (path, direction), result.stdout)
+                    self.assertIn('removed', result.stdout)
+
+    def test_action_parameter_removal(self):
+        for direction in ('input', 'output'):
+            with self.subTest(direction=direction):
+                old = ('container cont { action run { %s { '
+                       'leaf x { type string; } } } }' % direction)
+                result = self.compare(old, 'container cont { action run; }',
+                                      '2.0.0')
+                self.assertIn('CHK_DEF_REMOVED', result.stderr)
+                self.assertIn('probe:/cont/run/%s/x' % direction,
+                              result.stdout)
+
     def test_defaults(self):
         for keyword in ('leaf', 'leaf-list'):
             for old, new, version in (('', 'default a;', '1.1.0'),

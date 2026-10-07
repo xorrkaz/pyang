@@ -955,6 +955,8 @@ def chk_children(oldch, newchs, newp, ctx):
         chk_choice(oldch, newch, ctx)
     elif newch.keyword == 'case':
         chk_case(oldch, newch, ctx)
+    elif newch.keyword == 'action':
+        chk_i_children(oldch, newch, ctx)
     elif newch.keyword == 'input':
         chk_input_output(oldch, newch, ctx)
     elif newch.keyword == 'output':
