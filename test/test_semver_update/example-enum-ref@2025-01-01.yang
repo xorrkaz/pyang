@@ -7,7 +7,7 @@ module example-enum-ref {
 
   revision 2025-01-01 {
     description "Change enum reference.";
-    ysv:version "1.1.0";
+    ysv:version "1.0.1";
   }
 
   typedef enum-type {

@@ -161,6 +161,10 @@ class CheckUpdatePlugin(plugin.PyangPlugin):
             "the description change may have changed the semantics "
             "of the node")
         error.add_error_code(
+            'CHK_UNDECIDED_REFERENCE', 4,
+            "the reference change may have changed the semantics "
+            "of the definition")
+        error.add_error_code(
             'CHK_DESCRIPTION_REMOVED', 3,
             "the description is illegally removed")
         error.add_error_code(
@@ -518,6 +522,9 @@ def reason_for_error(etag, eargs):
                 "of the node")
     if etag == 'CHK_DESCRIPTION_REMOVED':
         return "description removed"
+    if etag == 'CHK_UNDECIDED_REFERENCE':
+        return ("the reference change may have changed the semantics "
+                "of the definition")
     return etag
 
 def collect_nodes(errors, want_level, modules_by_ref):
@@ -1223,8 +1230,10 @@ def chk_reference(old, new, ctx):
     newref = new.search_one('reference')
     if oldref is not None and newref is None:
         err_def_removed(oldref, new, ctx)
-    elif newref is not None and (oldref is None or oldref.arg != newref.arg):
+    elif oldref is None and newref is not None:
         mark_non_schema_bc_change(ctx)
+    elif oldref is not None and oldref.arg != newref.arg:
+        err_add(ctx.errors, newref.pos, 'CHK_UNDECIDED_REFERENCE', ())
 
 def chk_dependencies(old, new, ctx):
     for keyword in ('import', 'include'):

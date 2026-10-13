@@ -223,7 +223,8 @@ class EffectiveUpdateTest(unittest.TestCase):
                     ('description old;', '', '2.0.0',
                      'CHK_DESCRIPTION_REMOVED'),
                     ('', 'reference added;', '1.1.0', None),
-                    ('reference old;', 'reference new;', '1.1.0', None),
+                    ('reference old;', 'reference new;', '1.0.1',
+                     'CHK_UNDECIDED_REFERENCE'),
                     ('reference old;', '', '2.0.0', 'CHK_DEF_REMOVED'),
                     ('status obsolete;', 'status obsolete;', '1.0.1', None)):
                 with self.subTest(wrapper=wrapper, old=old, new=new):
@@ -234,8 +235,9 @@ class EffectiveUpdateTest(unittest.TestCase):
                         self.assertIn(diagnostic, result.stderr)
                         for path in paths:
                             self.assertIn(path, result.stdout)
-                        if diagnostic == 'CHK_UNDECIDED_DESCRIPTION':
-                            self.assertIn('description', result.stdout)
+                        if diagnostic in ('CHK_UNDECIDED_DESCRIPTION',
+                                          'CHK_UNDECIDED_REFERENCE'):
+                            self.assertIn('semantics', result.stdout)
                             self.assertNotIn('CHK_MISSING_NBC_EXTENSION',
                                              result.stderr)
                         else:
@@ -274,7 +276,8 @@ class EffectiveUpdateTest(unittest.TestCase):
                  'bit a { position 1; description new; }', '1.1.0',
                  'CHK_UNDECIDED_DESCRIPTION'),
                 ('bit a { position 1; reference old; }',
-                 'bit a { position 1; reference new; }', '1.1.0', None),
+                 'bit a { position 1; reference new; }', '1.1.0',
+                 'CHK_UNDECIDED_REFERENCE'),
                 ('bit a { position 1; reference old; }',
                  'bit a { position 1; }', '2.0.0', 'CHK_DEF_REMOVED'),
                 ('bit a { position 1; status obsolete; }', '', '1.1.0', None)):
@@ -824,7 +827,7 @@ class EffectiveUpdateTest(unittest.TestCase):
                  'min-elements 5;', '1.1.0'),
                 ('leaf x { type string; }', '', 'reference added;', '1.1.0'),
                 ('leaf x { type string; reference old; }', 'reference old;',
-                 'reference new;', '1.1.0')):
+                 'reference new;', '1.0.1')):
             with self.subTest(definition=definition, old=old, new=new):
                 result = self.compare((definition, 'refine x { %s }' % old),
                                       (definition, 'refine x { %s }' % new),
@@ -1096,8 +1099,10 @@ class EffectiveUpdateTest(unittest.TestCase):
                         ('description old;', '', '2.0.0',
                          'CHK_DESCRIPTION_REMOVED', 'description removed'),
                         ('', 'reference added;', '1.1.0', None, None),
-                        ('reference old;', 'reference new;', '1.1.0',
-                         None, None),
+                        ('reference old;', 'reference new;', '1.0.1',
+                         'CHK_UNDECIDED_REFERENCE',
+                         'the reference change may have changed the '
+                         'semantics of the definition'),
                         ('reference old;', '', '2.0.0',
                          'CHK_DEF_REMOVED', 'removed reference old'),
                         ('description old; reference old;',
@@ -1134,7 +1139,8 @@ class EffectiveUpdateTest(unittest.TestCase):
                     ('description old;', 'description new;',
                      'CHK_UNDECIDED_DESCRIPTION'),
                     ('description old;', '', 'CHK_DESCRIPTION_REMOVED'),
-                    ('reference old;', 'reference new;', None),
+                    ('reference old;', 'reference new;',
+                     'CHK_UNDECIDED_REFERENCE'),
                     ('reference old;', '', 'CHK_DEF_REMOVED')):
                 with self.subTest(yang_version=yang_version, old=old, new=new):
                     result = self.compare(body % ('true()', old),
@@ -1248,9 +1254,62 @@ class EffectiveUpdateTest(unittest.TestCase):
                            'typedef t { type string; %s }', '%s'):
             for old, new, version in (('', 'reference added;', '1.1.0'),
                                       ('reference old;', 'reference new;',
-                                       '1.1.0'),
+                                       '1.0.1'),
                                       ('reference old;', '', '2.0.0')):
-                self.compare(definition % old, definition % new, version)
+                result = self.compare(definition % old, definition % new,
+                                      version)
+                if old and new:
+                    self.assertIn('CHK_UNDECIDED_REFERENCE', result.stderr)
+                    self.assertIn('the reference change may have changed '
+                                  'the semantics of the definition',
+                                  result.stdout)
+                    self.assertNotIn('CHK_MISSING_NBC_EXTENSION',
+                                     result.stderr)
+
+    def test_reference_definitions(self):
+        for body in ('feature f { %s }', 'identity i { %s }',
+                     'grouping g { %s leaf x { type string; } }',
+                     'typedef t { type enumeration { enum a { %s } } }'):
+            for old, new, version, code in (
+                    ('', 'reference added;', '1.1.0', None),
+                    ('reference old;', 'reference new;', '1.0.1',
+                     'CHK_UNDECIDED_REFERENCE'),
+                    ('reference old;', '', '2.0.0', 'CHK_DEF_REMOVED'),
+                    ('reference old;', 'reference old;', '1.0.1', None)):
+                with self.subTest(body=body, old=old, new=new):
+                    result = self.compare(body % old, body % new, version)
+                    if code is not None:
+                        self.assertIn(code, result.stderr)
+                        if code == 'CHK_UNDECIDED_REFERENCE':
+                            self.assertIn('the reference change may have '
+                                          'changed the semantics of the '
+                                          'definition', result.stdout)
+                            self.assertNotIn(': error:', result.stderr)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+
+    def test_reference_declared_semver(self):
+        body = 'leaf x { type string; reference %s; }'
+        for declared in ('1.0.1', '1.1.0'):
+            result = self.compare(body % 'old', body % 'new', '1.0.1',
+                                  old_version='1.0.0', new_version=declared)
+            self.assertIn('CHK_UNDECIDED_REFERENCE', result.stderr)
+            code = 'CHK_BAD_SEMVER_MINOR_OVERPATCH_WITH_POSSIBLE_NBC'
+            if declared == '1.1.0':
+                self.assertIn(code, result.stderr)
+            else:
+                self.assertNotIn(code, result.stderr)
+            self.assertNotIn(': error:', result.stderr)
+
+    def test_reference_warning_suppressed_by_nbc(self):
+        old = 'leaf x { type string; reference old; }'
+        new = ('leaf x { type string; reference new; } '
+               'leaf y { type string; mandatory true; }')
+        result = self.compare(old, new, '2.0.0')
+        self.assertIn('CHK_NEW_MANDATORY', result.stderr)
+        self.assertIn('CHK_MISSING_NBC_EXTENSION', result.stderr)
+        self.assertNotIn('CHK_UNDECIDED_REFERENCE', result.stderr)
+        self.assertNotIn('POSSIBLE-NBC', result.stdout)
 
     def test_dependencies(self):
         for keyword in ('import', 'include'):

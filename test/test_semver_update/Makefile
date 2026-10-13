@@ -6,11 +6,11 @@ test:
 	@for pair in example-ref:possible-nbc-reference \
 		example-enum-ref:enum-possible-nbc-reference; do \
 		module=$${pair%:*}; expected=$${pair#*:}; \
-		echo "$$module reference BC..."; \
+		echo "$$module reference editorial..."; \
 		$(PYANG) $$module@2024-01-01.yang --check-update-semver \
 			$$module@2025-01-01.yang > $$expected.out 2> $$expected.err; \
 		diff expect/$$expected.out $$expected.out || exit 1; \
-		test ! -s $$expected.err || { cat $$expected.err; exit 1; }; \
+		diff expect/$$expected.err $$expected.err || exit 1; \
 	done
 	@echo "semver-bc... " | tr -d '\012';			\
 	$(PYANG) example-mod@2024-01-01.yang			\
