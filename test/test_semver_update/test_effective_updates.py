@@ -882,6 +882,89 @@ class EffectiveUpdateTest(unittest.TestCase):
                      (definition, 'refine x { default b; default a; }'),
                      '1.0.1', refine=True)
 
+    def test_augment_when_changes(self):
+        extra = {'dep.yang':
+                 'module dep { yang-version 1.1; namespace urn:dep; '
+                 'prefix d; container base; }'}
+        for body, paths in (
+                ('container base; augment /base { %s '
+                 'leaf x { type string; } leaf y { type string; } }',
+                 ('/base/x', '/base/y')),
+                ('import dep { prefix d; } @REV@ '
+                 'augment /d:base { %s leaf x { type string; } }',
+                 ('/base/x',)),
+                ('grouping g { container inner; } '
+                 'container base { uses g { augment inner { %s '
+                 'leaf x { type string; } } } }',
+                 ('/base/inner/x',)),
+                ('grouping g { container inner; } '
+                 'grouping h { uses g { augment inner { %s '
+                 'leaf x { type string; } } } } '
+                 'container one { uses h; } container two { uses h; }',
+                 ('/one/inner/x', '/two/inner/x')),
+                ('grouping g { leaf x { type string; } } '
+                 'container base; augment /base { %s uses g; }',
+                 ('/base/x',))):
+            for old, new, code in (
+                    ('', 'when "true()";', 'CHK_NEW_WHEN'),
+                    ('when "true()";', 'when "false()";',
+                     'CHK_UNDECIDED_WHEN'),
+                    ('when "false()";', 'when "true()";',
+                     'CHK_UNDECIDED_WHEN'),
+                    ('when "true()";', 'when "true()";', None)):
+                with self.subTest(body=body, old=old, new=new):
+                    version = '2.0.0' if code else '1.0.1'
+                    result = self.compare(body % old, body % new, version,
+                                          extra=extra)
+                    if code is None:
+                        self.assertNotIn('CHK_', result.stderr)
+                        continue
+                    self.assertIn(code, result.stderr)
+                    reason = ('added when condition' if code == 'CHK_NEW_WHEN'
+                              else 'when changed')
+                    for path in paths:
+                        self.assertIn('probe:%s (%s)' % (path, reason),
+                                      result.stdout)
+                    if code == 'CHK_NEW_WHEN':
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                      result.stderr)
+                        self.assertNotIn('POSSIBLE-NBC', result.stdout)
+                    else:
+                        self.assertNotIn(': error:', result.stderr)
+                        self.assertIn('Consult document authors and '
+                                      'YANG Doctors.', result.stdout)
+
+    def test_augment_when_independent_of_node_when(self):
+        for condition in ('true()', 'false()'):
+            body = ('container base; augment /base { %s '
+                    'leaf x { type string; when "true()"; } }')
+            result = self.compare(body % '',
+                                  body % ('when "%s";' % condition),
+                                  '2.0.0')
+            self.assertIn('CHK_NEW_WHEN', result.stderr)
+            self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+            self.assertIn('probe:/base/x (added when condition)',
+                          result.stdout)
+
+    def test_multiple_augment_when_changes(self):
+        body = ('container base; '
+                'augment /base { when "%s"; leaf x { type string; } } '
+                'augment /base { when "%s"; leaf y { type string; } }')
+        result = self.compare(body % ('true()', 'false()'),
+                              body % ('false()', 'true()'), '2.0.0')
+        self.assertEqual(result.stderr.count('CHK_UNDECIDED_WHEN'), 2)
+        self.assertIn('probe:/base/x (when changed)', result.stdout)
+        self.assertIn('probe:/base/y (when changed)', result.stdout)
+        self.assertNotIn(': error:', result.stderr)
+
+    def test_new_conditional_augment(self):
+        old = 'container base;'
+        new = old + (' augment /base { when "true()"; '
+                     'leaf x { type string; } }')
+        result = self.compare(old, new, '1.1.0')
+        self.assertNotIn('CHK_NEW_WHEN', result.stderr)
+        self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+
     def test_references(self):
         for definition in ('leaf x { type string; %s }',
                            'typedef t { type string; %s }', '%s'):

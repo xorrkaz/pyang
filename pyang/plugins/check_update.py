@@ -505,6 +505,8 @@ def reason_for_error(etag, eargs):
         return "data node moved"
     if etag == 'CHK_UNDECIDED_WHEN':
         return "when changed"
+    if etag == 'CHK_NEW_WHEN':
+        return "added when condition"
     if etag == 'CHK_UNDECIDED_MUST':
         return "must changed"
     if etag == 'CHK_UNDECIDED_PRESENCE':
@@ -569,9 +571,18 @@ def find_effective_stmts(stmt, pos, visited, node=None):
         found.append(stmt_to_node_desc(node if node is not None else stmt))
     # Expanded children retain source positions, but have instantiated parents.
     children = list(getattr(stmt, 'i_children', []))
+    # Augments of imported modules are absent from this module's i_children.
+    children.extend(stmt.search('augment'))
     children.extend(s for s in stmt.substmts
                     if s.keyword not in statements.data_definition_keywords
-                    and s.keyword not in ('uses', 'refine'))
+                    and s.keyword not in ('uses', 'refine')
+                    and not (stmt.keyword == 'augment' and
+                             s.keyword == 'when'))
+    # Augment whens are not copied into the effective child's substatements.
+    # Visit them through each affected child to report its instantiated path.
+    augment = getattr(stmt, 'i_augment', None)
+    if augment is not None:
+        children.extend(augment.search('when'))
     for child in children:
         found.extend(find_effective_stmts(child, pos, visited, node))
     return found
@@ -1063,15 +1074,25 @@ def chk_must(old, new, ctx):
             err_add(ctx.errors, newm.pos, 'CHK_UNDECIDED_MUST', ())
 
 def chk_when(old, new, ctx):
-    oldwhen = old.search('when')
-    newwhen = new.search('when')
+    chk_when_stmts(old.search('when'), new.search('when'),
+                   new.i_module.i_version, ctx)
+    oldaugment = getattr(old, 'i_augment', None)
+    newaugment = getattr(new, 'i_augment', None)
+    if oldaugment is not None or newaugment is not None:
+        oldwhen = oldaugment.search('when') if oldaugment is not None else []
+        newwhen = newaugment.search('when') if newaugment is not None else []
+        # A node's own condition must not mask a new augment condition.
+        chk_when_stmts(oldwhen, newwhen, new.i_module.i_version, ctx)
+
+def chk_when_stmts(oldwhen, newwhen, version, ctx):
     # remove all common whens
-    for oldw in old.search('when'):
-        neww = new.search_one('when', arg = oldw.arg)
-        if neww is not None:
-            newwhen.remove(neww)
-            oldwhen.remove(oldw)
-    if new.i_module.i_version == '1.1':
+    for oldw in list(oldwhen):
+        for neww in newwhen:
+            if neww.arg == oldw.arg:
+                newwhen.remove(neww)
+                oldwhen.remove(oldw)
+                break
+    if version == '1.1':
         if len(newwhen) == 0:
             # this is good; maybe some old whens were removed
             return
