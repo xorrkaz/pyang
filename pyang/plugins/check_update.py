@@ -1064,8 +1064,8 @@ def chk_must(old, new, ctx):
             newmust.remove(newm)
             oldmust.remove(oldm)
     if len(newmust) == 0:
-        # this is good; maybe some old musts were removed
-        pass
+        if oldmust:
+            mark_non_schema_bc_change(ctx)
     elif len(oldmust) == 0:
         for newm in newmust:
             err_add(ctx.errors, newm.pos, 'CHK_NEW_MUST', ())
@@ -1074,17 +1074,16 @@ def chk_must(old, new, ctx):
             err_add(ctx.errors, newm.pos, 'CHK_UNDECIDED_MUST', ())
 
 def chk_when(old, new, ctx):
-    chk_when_stmts(old.search('when'), new.search('when'),
-                   new.i_module.i_version, ctx)
+    chk_when_stmts(old.search('when'), new.search('when'), new, ctx)
     oldaugment = getattr(old, 'i_augment', None)
     newaugment = getattr(new, 'i_augment', None)
     if oldaugment is not None or newaugment is not None:
         oldwhen = oldaugment.search('when') if oldaugment is not None else []
         newwhen = newaugment.search('when') if newaugment is not None else []
         # A node's own condition must not mask a new augment condition.
-        chk_when_stmts(oldwhen, newwhen, new.i_module.i_version, ctx)
+        chk_when_stmts(oldwhen, newwhen, new, ctx)
 
-def chk_when_stmts(oldwhen, newwhen, version, ctx):
+def chk_when_stmts(oldwhen, newwhen, new, ctx):
     # remove all common whens
     for oldw in list(oldwhen):
         for neww in newwhen:
@@ -1092,10 +1091,14 @@ def chk_when_stmts(oldwhen, newwhen, version, ctx):
                 newwhen.remove(neww)
                 oldwhen.remove(oldw)
                 break
-    if version == '1.1':
-        if len(newwhen) == 0:
-            # this is good; maybe some old whens were removed
-            return
+    if len(newwhen) == 0:
+        if oldwhen:
+            if new.i_module.i_version == '1.1':
+                mark_non_schema_bc_change(ctx)
+            else:
+                for oldw in oldwhen:
+                    err_def_removed(oldw, new, ctx)
+        return
     if len(oldwhen) == 0:
         for neww in newwhen:
             err_add(ctx.errors, neww.pos, 'CHK_NEW_WHEN', ())

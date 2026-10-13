@@ -13,7 +13,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 class EffectiveUpdateTest(unittest.TestCase):
 
     def compare(self, old, new, version, refine=False, extra=None,
-                old_version=None, new_version=None, options=None):
+                old_version=None, new_version=None, options=None,
+                yang_version='1.1'):
         with tempfile.TemporaryDirectory() as directory:
             for name, body in (extra or {}).items():
                 with open(os.path.join(directory, name), 'w') as stream:
@@ -36,9 +37,9 @@ class EffectiveUpdateTest(unittest.TestCase):
                     body = '%s %s' % (revision, body)
                 if old_version is not None or new_version is not None:
                     body = 'import ietf-yang-semver { prefix ysv; } ' + body
-                text = ('module probe { yang-version 1.1; '
+                text = ('module probe { yang-version %s; '
                         'namespace urn:probe; '
-                        'prefix p; %s }' % body)
+                        'prefix p; %s }' % (yang_version, body))
                 text = text.replace('{', '{\n').replace(';', ';\n')
                 text = text.replace('}', '}\n')
                 path = os.path.join(directory, 'probe@%s.yang' % date)
@@ -964,6 +965,102 @@ class EffectiveUpdateTest(unittest.TestCase):
         result = self.compare(old, new, '1.1.0')
         self.assertNotIn('CHK_NEW_WHEN', result.stderr)
         self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+
+    def test_when_removals(self):
+        extra = {'dep.yang': 'module dep { namespace urn:dep; prefix d; '
+                 'container base; }'}
+        for yang_version in ('1', '1.1'):
+            for body, paths in (
+                    ('leaf x { type string; %s }', ('/x',)),
+                    ('grouping g { leaf x { type string; } } '
+                     'container base { uses g { %s } }', ('/base/x',)),
+                    ('container base; augment /base { %s '
+                     'leaf x { type string; } }', ('/base/x',)),
+                    ('import dep { prefix d; } @REV@ '
+                     'augment /d:base { %s leaf x { type string; } }',
+                     ('/base/x',)),
+                    ('grouping g { container inner; } '
+                     'container base { uses g { augment inner { %s '
+                     'leaf x { type string; } } } }', ('/base/inner/x',)),
+                    ('grouping g { container inner; } '
+                     'grouping h { uses g { augment inner { %s '
+                     'leaf x { type string; } } } } '
+                     'container one { uses h; } container two { uses h; }',
+                     ('/one/inner/x', '/two/inner/x'))):
+                with self.subTest(yang_version=yang_version, body=body):
+                    old = body % 'when "true()";'
+                    version = '2.0.0' if yang_version == '1' else '1.1.0'
+                    result = self.compare(old, body % '', version, extra=extra,
+                                          yang_version=yang_version)
+                    if yang_version == '1':
+                        self.assertIn('CHK_DEF_REMOVED', result.stderr)
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                      result.stderr)
+                        for path in paths:
+                            self.assertIn('probe:%s (removed when true())' %
+                                          path, result.stdout)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+                        self.assertNotIn('NBC', result.stdout)
+                    self.compare(old, old, '1.0.1', extra=extra,
+                                 yang_version=yang_version)
+
+    def test_partial_when_removals(self):
+        body = ('grouping g { leaf x { type string; %s } } '
+                'container base { uses g { %s } }')
+        old = body % ('when "true()";', 'when "false()";')
+        for yang_version in ('1', '1.1'):
+            for conditions in (('when "true()";', ''),
+                               ('', 'when "false()";')):
+                with self.subTest(yang_version=yang_version,
+                                  conditions=conditions):
+                    version = '2.0.0' if yang_version == '1' else '1.1.0'
+                    result = self.compare(old, body % conditions, version,
+                                          yang_version=yang_version)
+                    self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+                    if yang_version == '1':
+                        self.assertIn('probe:/base/x (removed when',
+                                      result.stdout)
+                    else:
+                        self.assertNotIn('CHK_', result.stderr)
+
+    def test_must_removals(self):
+        for yang_version in ('1', '1.1'):
+            for body in ('leaf x { type string; %s }',
+                         'container base { %s leaf x { type string; } }',
+                         'grouping g { leaf x { type string; %s } } '
+                         'container one { uses g; } '
+                         'container two { uses g; }'):
+                for old, new, version in (
+                        ('must "true()";', '', '1.1.0'),
+                        ('must "true()"; must "false()";',
+                         'must "true()";', '1.1.0'),
+                        ('must "true()";', 'must "true()";', '1.0.1')):
+                    with self.subTest(yang_version=yang_version, body=body,
+                                      old=old, new=new):
+                        result = self.compare(body % old, body % new, version,
+                                              yang_version=yang_version)
+                        self.assertNotIn('CHK_', result.stderr)
+                        self.assertNotIn('NBC', result.stdout)
+
+    def test_refined_must_removals(self):
+        definition = 'leaf x { type string; must "true()"; }'
+        result = self.compare(
+            (definition, 'refine x { must "false()"; }'),
+            (definition, ''), '1.1.0', refine=True)
+        self.assertNotIn('CHK_', result.stderr)
+
+    def test_condition_replacements_remain_possible_nbc(self):
+        for yang_version in ('1', '1.1'):
+            for keyword in ('when', 'must'):
+                with self.subTest(yang_version=yang_version, keyword=keyword):
+                    body = 'leaf x { type string; %s "%%s"; }' % keyword
+                    result = self.compare(body % 'true()', body % 'false()',
+                                          '2.0.0', yang_version=yang_version)
+                    self.assertIn('CHK_UNDECIDED_' + keyword.upper(),
+                                  result.stderr)
+                    self.assertNotIn('CHK_DEF_REMOVED', result.stderr)
+                    self.assertNotIn(': error:', result.stderr)
 
     def test_references(self):
         for definition in ('leaf x { type string; %s }',
