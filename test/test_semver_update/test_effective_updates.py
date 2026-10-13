@@ -1062,6 +1062,187 @@ class EffectiveUpdateTest(unittest.TestCase):
                     self.assertNotIn('CHK_DEF_REMOVED', result.stderr)
                     self.assertNotIn(': error:', result.stderr)
 
+    def test_when_metadata(self):
+        extra = {'dep.yang': 'module dep { namespace urn:dep; prefix d; '
+                 'container base; }'}
+        for yang_version in ('1', '1.1'):
+            for body, paths in (
+                    ('leaf x { type string; %s }', ('/x',)),
+                    ('grouping g { leaf x { type string; } } '
+                     'container base { uses g { %s } }', ('/base/x',)),
+                    ('container base; augment /base { %s '
+                     'leaf x { type string; } leaf y { type string; } }',
+                     ('/base/x', '/base/y')),
+                    ('import dep { prefix d; } @REV@ '
+                     'augment /d:base { %s leaf x { type string; } }',
+                     ('/base/x',)),
+                    ('grouping g { container inner; } '
+                     'container base { uses g { augment inner { %s '
+                     'leaf x { type string; } } } }', ('/base/inner/x',)),
+                    ('grouping g { container inner; } '
+                     'grouping h { uses g { augment inner { %s '
+                     'leaf x { type string; } } } } '
+                     'container one { uses h; } container two { uses h; }',
+                     ('/one/inner/x', '/two/inner/x'))):
+                for old, new, version, code, reason in (
+                        ('', 'description added;', '1.0.1',
+                         'CHK_UNDECIDED_DESCRIPTION',
+                         'the description change may have changed the '
+                         'semantics of the node'),
+                        ('description old;', 'description new;', '1.0.1',
+                         'CHK_UNDECIDED_DESCRIPTION',
+                         'the description change may have changed the '
+                         'semantics of the node'),
+                        ('description old;', '', '2.0.0',
+                         'CHK_DESCRIPTION_REMOVED', 'description removed'),
+                        ('', 'reference added;', '1.1.0', None, None),
+                        ('reference old;', 'reference new;', '1.1.0',
+                         None, None),
+                        ('reference old;', '', '2.0.0',
+                         'CHK_DEF_REMOVED', 'removed reference old'),
+                        ('description old; reference old;',
+                         'description old; reference old;', '1.0.1',
+                         None, None)):
+                    with self.subTest(yang_version=yang_version, body=body,
+                                      old=old, new=new):
+                        when = 'when "true()" { %s }'
+                        result = self.compare(body % (when % old),
+                                              body % (when % new), version,
+                                              extra=extra,
+                                              yang_version=yang_version)
+                        if code is None:
+                            self.assertNotIn('CHK_', result.stderr)
+                            self.assertNotIn('NBC', result.stdout)
+                            continue
+                        self.assertIn(code, result.stderr)
+                        for path in paths:
+                            self.assertIn('probe:%s (%s)' % (path, reason),
+                                          result.stdout)
+                        if version == '2.0.0':
+                            self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                          result.stderr)
+                            self.assertNotIn('POSSIBLE-NBC', result.stdout)
+                        else:
+                            self.assertNotIn(': error:', result.stderr)
+                            self.assertIn('Consult document authors and '
+                                          'YANG Doctors.', result.stdout)
+
+    def test_when_metadata_with_changed_expression(self):
+        body = 'leaf x { type string; when "%s" { %s } }'
+        for yang_version in ('1', '1.1'):
+            for old, new, code in (
+                    ('description old;', 'description new;',
+                     'CHK_UNDECIDED_DESCRIPTION'),
+                    ('description old;', '', 'CHK_DESCRIPTION_REMOVED'),
+                    ('reference old;', 'reference new;', None),
+                    ('reference old;', '', 'CHK_DEF_REMOVED')):
+                with self.subTest(yang_version=yang_version, old=old, new=new):
+                    result = self.compare(body % ('true()', old),
+                                          body % ('false()', new), '2.0.0',
+                                          yang_version=yang_version)
+                    if code is not None:
+                        self.assertIn(code, result.stderr)
+                    if code in ('CHK_DESCRIPTION_REMOVED', 'CHK_DEF_REMOVED'):
+                        self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                      result.stderr)
+                    else:
+                        self.assertIn('CHK_UNDECIDED_WHEN', result.stderr)
+                        self.assertNotIn(': error:', result.stderr)
+
+    def test_when_metadata_origins(self):
+        body = ('grouping g { leaf x { type string; '
+                'when "%s" { %s } } } '
+                'container base { uses g { when "%s" { %s } } }')
+        old = body % ('true()', 'description direct;',
+                      'true()', 'description inherited;')
+        for direct, direct_desc, inherited, inherited_desc, version, count in (
+                ('true()', 'description direct;',
+                 'true()', 'description inherited;', '1.0.1', 0),
+                ('true()', 'description edited;',
+                 'true()', 'description inherited;', '1.0.1', 1),
+                ('true()', 'description direct;',
+                 'true()', 'description edited;', '1.0.1', 1),
+                ('false()', 'description edited;',
+                 'true()', 'description inherited;', '2.0.0', 1),
+                ('false()', 'description edited;',
+                 'false()', 'description also-edited;', '2.0.0', 2),
+                ('false()', '', 'true()', 'description inherited;',
+                 '2.0.0', 0)):
+            with self.subTest(direct=direct, direct_desc=direct_desc,
+                              inherited=inherited):
+                new = body % (direct, direct_desc, inherited, inherited_desc)
+                result = self.compare(old, new, version)
+                self.assertEqual(
+                    result.stderr.count('CHK_UNDECIDED_DESCRIPTION'), count)
+                if not direct_desc:
+                    self.assertIn('CHK_DESCRIPTION_REMOVED', result.stderr)
+                elif count:
+                    self.assertIn('probe:/base/x (the description change may '
+                                  'have changed the semantics of the node)',
+                                  result.stdout)
+                else:
+                    self.assertNotIn('CHK_', result.stderr)
+
+    def test_nested_when_metadata(self):
+        body = ('grouping g { leaf x { type string; } } '
+                'grouping h { uses g { when "%s" { %s } } } '
+                'container base { uses h { when "%s" { %s } } }')
+        old = body % ('true()', 'description inner;',
+                      'false()', 'description outer;')
+        for yang_version in ('1', '1.1'):
+            for inner, outer, code in (
+                    ('description edited;', 'description outer;',
+                     'CHK_UNDECIDED_DESCRIPTION'),
+                    ('', 'description also-edited;',
+                     'CHK_DESCRIPTION_REMOVED')):
+                with self.subTest(yang_version=yang_version, inner=inner):
+                    new = body % ('false()', inner, 'true()', outer)
+                    result = self.compare(old, new, '2.0.0',
+                                          yang_version=yang_version)
+                    self.assertIn(code, result.stderr)
+                    if inner:
+                        self.assertEqual(result.stderr.count(code), 1)
+                        self.assertNotIn(': error:', result.stderr)
+                        self.assertIn('probe:/base/x (the description change '
+                                      'may have changed the semantics of '
+                                      'the node)', result.stdout)
+                    else:
+                        self.assertNotIn('CHK_UNDECIDED_DESCRIPTION',
+                                         result.stderr)
+                        self.assertIn('CHK_MISSING_NBC_EXTENSION',
+                                      result.stderr)
+
+    def test_when_metadata_prefix_alias(self):
+        extra = {'dep.yang': 'module dep { namespace urn:dep; prefix d; '
+                 'grouping g { leaf x { type string; } } }'}
+        body = ('import dep { prefix %s; } @REV@ '
+                'container base { uses %s:g { '
+                'when "true()" { description %s; } } }')
+        old = body % ('d', 'd', 'old')
+        for description in ('old', 'new'):
+            result = self.compare(old, body % ('other', 'other', description),
+                                  '1.0.1', extra=extra)
+            self.assertNotIn('CHK_UNDECIDED_WHEN', result.stderr)
+            if description == 'new':
+                self.assertIn('CHK_UNDECIDED_DESCRIPTION', result.stderr)
+                self.assertIn('probe:/base/x (the description change may have '
+                              'changed the semantics of the node)',
+                              result.stdout)
+            else:
+                self.assertNotIn('CHK_', result.stderr)
+
+    def test_removed_when_metadata(self):
+        old = ('leaf x { type string; when "true()" { '
+               'description old; reference old; } }')
+        new = 'leaf x { type string; }'
+        for yang_version in ('1', '1.1'):
+            version = '2.0.0' if yang_version == '1' else '1.1.0'
+            result = self.compare(old, new, version, yang_version=yang_version)
+            self.assertNotIn('CHK_DESCRIPTION_REMOVED', result.stderr)
+            self.assertNotIn('removed reference', result.stdout)
+            self.assertNotIn('CHK_UNDECIDED_DESCRIPTION', result.stderr)
+
     def test_references(self):
         for definition in ('leaf x { type string; %s }',
                            'typedef t { type string; %s }', '%s'):

@@ -1087,10 +1087,22 @@ def chk_when_stmts(oldwhen, newwhen, new, ctx):
     # remove all common whens
     for oldw in list(oldwhen):
         for neww in newwhen:
-            if neww.arg == oldw.arg:
+            if (neww.arg == oldw.arg and
+                when_origin(neww) == when_origin(oldw)):
+                chk_when_metadata(oldw, neww, ctx)
                 newwhen.remove(neww)
                 oldwhen.remove(oldw)
                 break
+    # A replaced expression can also have metadata changes. Only pair
+    # unambiguous replacements, keeping direct and uses conditions separate.
+    for oldw in oldwhen:
+        origin = when_origin(oldw)
+        oldmatches = [s for s in oldwhen
+                      if when_origin(s) == origin]
+        newmatches = [s for s in newwhen
+                      if when_origin(s) == origin]
+        if len(oldmatches) == 1 and len(newmatches) == 1:
+            chk_when_metadata(oldw, newmatches[0], ctx)
     if len(newwhen) == 0:
         if oldwhen:
             if new.i_module.i_version == '1.1':
@@ -1105,6 +1117,25 @@ def chk_when_stmts(oldwhen, newwhen, new, ctx):
     else:
         for neww in newwhen:
             err_add(ctx.errors, neww.pos, 'CHK_UNDECIDED_WHEN', ())
+
+def when_origin(stmt):
+    if getattr(stmt, 'i_origin', None) != 'uses':
+        return None
+    # Copies retain stmt_parent, identifying the original uses declaration.
+    origin = []
+    parent = stmt.stmt_parent
+    while parent is not None:
+        arg = parent.arg
+        if parent.keyword == 'uses':
+            grouping = parent.i_grouping
+            arg = (grouping.i_module.i_modulename, grouping.arg)
+        origin.append((parent.keyword, arg))
+        parent = parent.stmt_parent
+    return tuple(origin)
+
+def chk_when_metadata(old, new, ctx):
+    chk_description(old, new, ctx)
+    chk_reference(old, new, ctx)
 
 def chk_units(old, new, ctx):
     oldunits = old.search_one('units')
